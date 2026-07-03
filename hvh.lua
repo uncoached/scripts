@@ -598,4 +598,3 @@ end)
 
 -- Notify launch
 WindUI:Notify({Title = "HVH Premium", Content = "Script loaded. Press "..(Window.ToggleKey and Window.ToggleKey.Name or "Insert").." to toggle menu."})
-```
