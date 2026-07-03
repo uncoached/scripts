@@ -1,5 +1,5 @@
--- Build Exploit Pack – WindUI Edition (Placing Speed Slider)
--- All features, placeBlock uses exact CFrame, Place Blocks (Once) has a configurable delay.
+-- Build Exploit Pack – WindUI Edition (Fast Spammer)
+-- Spammer now fills sphere instantly (no delay). Adjustable speed slider.
 
 local WindUI = nil
 pcall(function()
@@ -323,7 +323,7 @@ MainTab:Section({ Title = "Destroy All" }):Button({
 })
 
 -- Place Blocks (Once) with speed slider
-local placeDelay = 0.005  -- default 5ms between blocks
+local placeDelay = 0.005
 MainTab:Button({
     Title = "🧱 PLACE BLOCKS (Once)",
     Callback = function()
@@ -339,7 +339,6 @@ MainTab:Button({
         local gridSize = math.ceil(math.sqrt(blocksPerLayer))
         local blockType = "Oak Planks"
         local placed = 0
-        -- Sequential loop with small delay to avoid throttling
         for layer = 0, heightLayers - 1 do
             local count = 0
             for x = -gridSize, gridSize do
@@ -520,15 +519,15 @@ AuraTab:Slider({ Title = "Speed", Step = 0.01, Value = { Min = 0.05, Max = 1, De
 AuraTab:Slider({ Title = "Clear Dist", Step = 1, Value = { Min = 5, Max = 50, Default = 20 }, Callback = function(v) auraClear = v end })
 AuraTab:Slider({ Title = "Orbit Dist", Step = 1, Value = { Min = 5, Max = 50, Default = 20 }, Callback = function(v) auraOrbit = v end })
 
--- SPAMMER TAB
+-- SPAMMER TAB (FAST)
 local SpammerTab = Window:Tab({ Title = "Spammer", Icon = "solar:layers-bold" })
-local spamDelay = 0.05
+local spamDelay = 0    -- no delay between placements
 SpammerTab:Toggle({
     Title = "Block Spammer (Sphere Fill)",
     Callback = function(state)
         if state then
             startFeature("spammer", function(flag)
-                local radius = 20
+                local radius = 10
                 while flag.running do
                     if character and character.PrimaryPart then
                         local center = character.PrimaryPart.Position
@@ -546,7 +545,7 @@ SpammerTab:Toggle({
                                 end
                             end
                         end
-                        task.wait(0.5)
+                        task.wait()  -- yield a frame between fills (very fast)
                     else
                         task.wait(1)
                     end
@@ -555,7 +554,12 @@ SpammerTab:Toggle({
         else stopFeature("spammer") end
     end,
 })
-SpammerTab:Slider({ Title = "Delay (s)", Step = 0.001, Value = { Min = 0, Max = 0.5, Default = 0.05 }, Callback = function(v) spamDelay = v end })
+SpammerTab:Slider({
+    Title = "Delay (s)",
+    Step = 0.001,
+    Value = { Min = 0, Max = 0.5, Default = 0 },
+    Callback = function(v) spamDelay = v end,
+})
 
 -- LOCAL PLAYER TAB
 local LocalTab = Window:Tab({ Title = "Local", Icon = "solar:user-speak-bold" })
@@ -677,5 +681,5 @@ Window:Button({
     end,
 })
 
-WindUI:Notify({ Title = "Build Exploit Pack", Content = "All features ready!" })
-print("Build Exploit Pack – With Place Speed Slider loaded.")
+WindUI:Notify({ Title = "Build Exploit Pack", Content = "Fast spammer ready!" })
+print("Build Exploit Pack – Fast Spammer Loaded.")
