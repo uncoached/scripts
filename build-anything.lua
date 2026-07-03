@@ -1,26 +1,34 @@
--- Build Exploit Pack – WindUI Edition (Final Fixed)
--- Handles all features, proper thread cancellation, missing services.
+-- Build Exploit Pack – WindUI Edition (Stable)
+-- Handles WindUI load errors and includes all features.
 
--- ==================== WindUI Load ====================
-local WindUI
-do
-	local ok, result = pcall(function()
-		return require("./src/Init")
-	end)
-	if ok then
-		WindUI = result
-	elseif cloneref and cloneref(game:GetService("RunService")):IsStudio() then
-		WindUI = require(cloneref(game:GetService("ReplicatedStorage")):WaitForChild("WindUI"):WaitForChild("Init"))
-	else
-		local success, lib = pcall(function()
+-- ==================== WindUI Load (Safe) ====================
+local WindUI = nil
+
+-- Try loading WindUI
+local function loadWindUI()
+	local success, result = pcall(function()
+		if game:GetService("RunService"):IsStudio() then
+			return require(game:GetService("ReplicatedStorage"):WaitForChild("WindUI"):WaitForChild("Init"))
+		else
 			return loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
-		end)
-		if not success then
-			warn("WindUI failed to load: " .. tostring(lib))
-			return
 		end
-		WindUI = lib
+	end)
+	if success then
+		WindUI = result
+	else
+		warn("WindUI load failed: " .. tostring(result))
 	end
+end
+loadWindUI()
+
+-- Exit if WindUI failed
+if not WindUI then
+	game:GetService("StarterGui"):SetCore("SendNotification", {
+		Title = "Error",
+		Text = "WindUI could not be loaded. Check your internet or executor.",
+		Duration = 10,
+	})
+	return
 end
 
 -- ==================== Services ====================
@@ -30,8 +38,8 @@ local RunService = game:GetService("RunService")
 local Lighting = game:GetService("Lighting")
 local player = Players.LocalPlayer
 
--- Character
-local character
+-- Character handling
+local character = nil
 local function updateCharacter()
 	character = player.Character
 	if character and not character:FindFirstChild("HumanoidRootPart") then
@@ -45,7 +53,8 @@ player.CharacterAdded:Connect(function(newChar)
 end)
 
 -- Remote references
-local events = game:GetService("ReplicatedStorage"):WaitForChild("Events")
+local replicatedStorage = game:GetService("ReplicatedStorage")
+local events = replicatedStorage:WaitForChild("Events")
 local placeRemote = events:WaitForChild("Place")
 local destroyRemote = events:WaitForChild("DestroyBlock")
 local baseplate = workspace:WaitForChild("Baseplate", 10) or workspace
@@ -56,11 +65,7 @@ builtFolder.Name = "Built"
 getgenv().OldPos = nil
 getgenv().FPDH = workspace.FallenPartsDestroyHeight
 
--- ==================== Feature States ====================
-local selectedTarget = nil
-local auraTarget = nil
-
--- States and threads
+-- ==================== Feature State Table ====================
 local states = {
 	nukeAll = false, nukeTarget = false,
 	flingAll = false, flingTarget = false,
@@ -70,10 +75,9 @@ local states = {
 	spammer = false,
 	fly = false, noclip = false,
 }
-
 local threads = {}
 
-local function cancelThread(name)
+local function stopThread(name)
 	if threads[name] then
 		task.cancel(threads[name])
 		threads[name] = nil
@@ -81,11 +85,11 @@ local function cancelThread(name)
 end
 
 local function startThread(name, f)
-	cancelThread(name)
+	stopThread(name)
 	threads[name] = task.spawn(f)
 end
 
--- ==================== Utility Functions ====================
+-- ==================== Utility ====================
 local function placeBlock(blockType, pos)
 	local bp = workspace:FindFirstChild("Baseplate") or workspace
 	local roundedPos = Vector3.new(math.round(pos.X), math.round(pos.Y), math.round(pos.Z))
@@ -117,7 +121,6 @@ local function destroyAllParts(folder)
 	end
 end
 
--- Fling function (same as before, but uses a passed running flag)
 local function SkidFling(TargetPlayer, runningFlag)
 	local Character = character
 	local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
@@ -224,14 +227,11 @@ local Window = WindUI:CreateWindow({
 	Title = "Build Exploit Pack",
 	Folder = "BuildExploit",
 	Icon = "solar:hammer-bold",
-	OpenButton = {
-		Title = "Open Exploit Menu",
-		Enabled = true,
-	},
+	OpenButton = { Title = "Open", Enabled = true },
 })
 
--- Shared target dropdown helpers
-local function refreshTargetDropdown(dropdown)
+-- Helper: refresh any dropdown with player names
+local function refreshPlayerList(dropdown)
 	local names = {}
 	for _, plr in ipairs(Players:GetPlayers()) do
 		if plr ~= player then table.insert(names, plr.Name) end
@@ -241,7 +241,9 @@ end
 
 -- ==================== TARGET TAB ====================
 local TargetTab = Window:Tab({ Title = "Target", Icon = "solar:user-bold" })
-local sharedTargetDropdown = TargetTab:Section({ Title = "Select Target" }):Dropdown({
+local selectedTarget = nil
+
+local targetDropdown = TargetTab:Section({ Title = "Select Target" }):Dropdown({
 	Title = "Target Player",
 	Values = {},
 	AllowNone = true,
@@ -258,17 +260,15 @@ local sharedTargetDropdown = TargetTab:Section({ Title = "Select Target" }):Drop
 		end
 	end,
 })
-refreshTargetDropdown(sharedTargetDropdown)
-Players.PlayerAdded:Connect(function() refreshTargetDropdown(sharedTargetDropdown) end)
+refreshPlayerList(targetDropdown)
+Players.PlayerAdded:Connect(function() refreshPlayerList(targetDropdown) end)
 Players.PlayerRemoving:Connect(function(p)
-	if selectedTarget == p then selectedTarget = nil; sharedTargetDropdown:Select(nil) end
-	refreshTargetDropdown(sharedTargetDropdown)
+	if selectedTarget == p then selectedTarget = nil; targetDropdown:Select(nil) end
+	refreshPlayerList(targetDropdown)
 end)
 
--- Target Actions Section
 local TargetActions = TargetTab:Section({ Title = "Actions on Target" })
 
--- Fling Target
 TargetActions:Toggle({
 	Title = "Fling Target",
 	Callback = function(state)
@@ -283,12 +283,11 @@ TargetActions:Toggle({
 				end
 			end)
 		else
-			cancelThread("flingTarget")
+			stopThread("flingTarget")
 		end
 	end,
 })
 
--- Cage Target
 TargetActions:Toggle({
 	Title = "Cage Target",
 	Callback = function(state)
@@ -302,12 +301,11 @@ TargetActions:Toggle({
 				end
 			end)
 		else
-			cancelThread("cageTarget")
+			stopThread("cageTarget")
 		end
 	end,
 })
 
--- Nuke Target (Teleport Delete)
 TargetActions:Toggle({
 	Title = "Nuke Target (Teleport Delete)",
 	Callback = function(state)
@@ -341,12 +339,11 @@ TargetActions:Toggle({
 				end
 			end)
 		else
-			cancelThread("nukeTarget")
+			stopThread("nukeTarget")
 		end
 	end,
 })
 
--- Teleport to Target
 TargetActions:Button({
 	Title = "Teleport to Target",
 	Callback = function()
@@ -354,17 +351,13 @@ TargetActions:Button({
 			if character and character.PrimaryPart then
 				pcall(function() character:PivotTo(selectedTarget.Character.PrimaryPart.CFrame + Vector3.new(0,2,0)) end)
 			end
-		else
-			WindUI:Notify({ Title = "Error", Content = "Target not available", Duration = 2 })
 		end
 	end,
 })
 
 -- ==================== MAIN TAB ====================
 local MainTab = Window:Tab({ Title = "Main", Icon = "solar:globus-bold" })
-
-MainTab:Section({ Title = "Destroy All" })
-MainTab:Button({
+MainTab:Section({ Title = "Destroy All" }):Button({
 	Title = "🗑️ DESTROY ALL",
 	Color = Color3.fromRGB(220, 20, 20),
 	Callback = function()
@@ -383,14 +376,14 @@ MainTab:Toggle({
 					for _, plr in ipairs(Players:GetPlayers()) do
 						if plr ~= player then
 							SkidFling(plr, function() return states.flingAll end)
-							task.wait(1) -- slower to prevent overload
+							task.wait(1)
 						end
 					end
 					task.wait(1)
 				end
 			end)
 		else
-			cancelThread("flingAll")
+			stopThread("flingAll")
 		end
 	end,
 })
@@ -412,7 +405,7 @@ MainTab:Toggle({
 				end
 			end)
 		else
-			cancelThread("cageAll")
+			stopThread("cageAll")
 		end
 	end,
 })
@@ -448,12 +441,11 @@ MainTab:Toggle({
 				end
 			end)
 		else
-			cancelThread("nukeAll")
+			stopThread("nukeAll")
 		end
 	end,
 })
 
--- Touch Fling
 MainTab:Toggle({
 	Title = "Touch Fling",
 	Callback = function(state)
@@ -463,7 +455,7 @@ MainTab:Toggle({
 				if not character then return end
 				for _, part in ipairs(character:GetDescendants()) do
 					if part:IsA("BasePart") then
-						local con = part.Touched:Connect(function(hit)
+						part.Touched:Connect(function(hit)
 							if not states.touchFling then return end
 							local hitPlr = Players:GetPlayerFromCharacter(hit.Parent)
 							if hitPlr and hitPlr ~= player then
@@ -472,7 +464,6 @@ MainTab:Toggle({
 								end)
 							end
 						end)
-						-- Store connection? Not needed for simple implementation.
 					end
 				end
 			end
@@ -484,6 +475,7 @@ MainTab:Toggle({
 
 -- ==================== AURA TAB ====================
 local AuraTab = Window:Tab({ Title = "Aura", Icon = "solar:star-bold" })
+local auraTarget = nil
 local auraTargetDropdown = AuraTab:Section({ Title = "Aura Target" }):Dropdown({
 	Title = "Select Aura Target",
 	Values = {},
@@ -501,14 +493,13 @@ local auraTargetDropdown = AuraTab:Section({ Title = "Aura Target" }):Dropdown({
 		end
 	end,
 })
-refreshTargetDropdown(auraTargetDropdown)
-Players.PlayerAdded:Connect(function() refreshTargetDropdown(auraTargetDropdown) end)
+refreshPlayerList(auraTargetDropdown)
+Players.PlayerAdded:Connect(function() refreshPlayerList(auraTargetDropdown) end)
 Players.PlayerRemoving:Connect(function(p)
 	if auraTarget == p then auraTarget = nil; auraTargetDropdown:Select(nil) end
-	refreshTargetDropdown(auraTargetDropdown)
+	refreshPlayerList(auraTargetDropdown)
 end)
 
--- Aura Toggle and Sliders
 local auraSpeed = 0.3
 local auraClearDist = 20
 local auraOrbitDist = 20
@@ -521,7 +512,6 @@ AuraTab:Toggle({
 		if state then
 			startThread("aura", function()
 				while states.aura do
-					local source = builtFolder
 					local target = auraTarget
 					if target and target.Character and target.Character.PrimaryPart then
 						local tpos = target.Character.PrimaryPart.Position
@@ -536,52 +526,35 @@ AuraTab:Toggle({
 							pcall(function() character:PivotTo(CFrame.new(myPos)) end)
 						end
 						task.spawn(function()
-							for _, v in ipairs(source:GetDescendants()) do
+							for _, v in ipairs(builtFolder:GetDescendants()) do
 								if v:IsA("BasePart") and v.Parent and (v.Position - myPos).Magnitude <= auraClearDist then
 									pcall(function() destroyRemote:InvokeServer(v) end)
 								end
 							end
 						end)
 						auraAngle = auraAngle + auraSpeed
-					else
-						if character and character.PrimaryPart then
-							local pos = character.PrimaryPart.Position
-							task.spawn(function()
-								for _, v in ipairs(source:GetDescendants()) do
-									if v:IsA("BasePart") and v.Parent and (v.Position - pos).Magnitude <= auraClearDist then
-										pcall(function() destroyRemote:InvokeServer(v) end)
-									end
+					elseif character and character.PrimaryPart then
+						local pos = character.PrimaryPart.Position
+						task.spawn(function()
+							for _, v in ipairs(builtFolder:GetDescendants()) do
+								if v:IsA("BasePart") and v.Parent and (v.Position - pos).Magnitude <= auraClearDist then
+									pcall(function() destroyRemote:InvokeServer(v) end)
 								end
-							end)
-						end
+							end
+						end)
 					end
 					task.wait()
 				end
 			end)
 		else
-			cancelThread("aura")
+			stopThread("aura")
 		end
 	end,
 })
 
-AuraTab:Slider({
-	Title = "Speed",
-	Step = 0.01,
-	Value = { Min = 0.05, Max = 1, Default = 0.3 },
-	Callback = function(value) auraSpeed = value end,
-})
-AuraTab:Slider({
-	Title = "Clear Distance",
-	Step = 1,
-	Value = { Min = 5, Max = 50, Default = 20 },
-	Callback = function(value) auraClearDist = value end,
-})
-AuraTab:Slider({
-	Title = "Orbit Distance",
-	Step = 1,
-	Value = { Min = 5, Max = 50, Default = 20 },
-	Callback = function(value) auraOrbitDist = value end,
-})
+AuraTab:Slider({ Title = "Speed", Step = 0.01, Value = { Min = 0.05, Max = 1, Default = 0.3 }, Callback = function(v) auraSpeed = v end })
+AuraTab:Slider({ Title = "Clear Distance", Step = 1, Value = { Min = 5, Max = 50, Default = 20 }, Callback = function(v) auraClearDist = v end })
+AuraTab:Slider({ Title = "Orbit Distance", Step = 1, Value = { Min = 5, Max = 50, Default = 20 }, Callback = function(v) auraOrbitDist = v end })
 
 -- ==================== SPAMMER TAB ====================
 local SpammerTab = Window:Tab({ Title = "Spammer", Icon = "solar:layers-bold" })
@@ -609,100 +582,60 @@ SpammerTab:Toggle({
 				end
 			end)
 		else
-			cancelThread("spammer")
+			stopThread("spammer")
 		end
 	end,
 })
-SpammerTab:Slider({
-	Title = "Delay (s)",
-	Step = 0.01,
-	Value = { Min = 0.01, Max = 2, Default = 0.1 },
-	Callback = function(value) spammerDelay = value end,
-})
+SpammerTab:Slider({ Title = "Delay (s)", Step = 0.01, Value = { Min = 0.01, Max = 2, Default = 0.1 }, Callback = function(v) spammerDelay = v end })
 
 -- ==================== LOCAL PLAYER TAB ====================
 local LocalTab = Window:Tab({ Title = "Local", Icon = "solar:user-speak-bold" })
-LocalTab:Slider({
-	Title = "WalkSpeed",
-	Step = 1,
-	Value = { Min = 16, Max = 200, Default = 16 },
-	Callback = function(value)
-		if character and character:FindFirstChildOfClass("Humanoid") then
-			character:FindFirstChildOfClass("Humanoid").WalkSpeed = value
-		end
-	end,
-})
-LocalTab:Slider({
-	Title = "JumpPower",
-	Step = 1,
-	Value = { Min = 50, Max = 300, Default = 50 },
-	Callback = function(value)
-		if character and character:FindFirstChildOfClass("Humanoid") then
-			character:FindFirstChildOfClass("Humanoid").JumpPower = value
-		end
-	end,
-})
-LocalTab:Slider({
-	Title = "HipHeight",
-	Step = 0.1,
-	Value = { Min = 0, Max = 5, Default = 0 },
-	Callback = function(value)
-		if character and character:FindFirstChildOfClass("Humanoid") then
-			character:FindFirstChildOfClass("Humanoid").HipHeight = value
-		end
-	end,
-})
-LocalTab:Slider({
-	Title = "Gravity",
-	Step = 0.01,
-	Value = { Min = 0, Max = 196.2, Default = 196.2 },
-	Callback = function(value)
-		workspace.Gravity = value
-	end,
-})
+LocalTab:Slider({ Title = "WalkSpeed", Step = 1, Value = { Min = 16, Max = 200, Default = 16 }, Callback = function(v)
+	if character and character:FindFirstChildOfClass("Humanoid") then character:FindFirstChildOfClass("Humanoid").WalkSpeed = v end
+end })
+LocalTab:Slider({ Title = "JumpPower", Step = 1, Value = { Min = 50, Max = 300, Default = 50 }, Callback = function(v)
+	if character and character:FindFirstChildOfClass("Humanoid") then character:FindFirstChildOfClass("Humanoid").JumpPower = v end
+end })
+LocalTab:Slider({ Title = "HipHeight", Step = 0.1, Value = { Min = 0, Max = 5, Default = 0 }, Callback = function(v)
+	if character and character:FindFirstChildOfClass("Humanoid") then character:FindFirstChildOfClass("Humanoid").HipHeight = v end
+end })
+LocalTab:Slider({ Title = "Gravity", Step = 0.01, Value = { Min = 0, Max = 196.2, Default = 196.2 }, Callback = function(v) workspace.Gravity = v end })
 
 LocalTab:Toggle({
 	Title = "Fly",
 	Callback = function(state)
 		states.fly = state
 		if state then
-			if character and character.PrimaryPart and character:FindFirstChildOfClass("Humanoid") then
-				local hum = character:FindFirstChildOfClass("Humanoid")
+			local hum = character and character:FindFirstChildOfClass("Humanoid")
+			local root = character and character.PrimaryPart
+			if hum and root then
 				hum.PlatformStand = true
-				local bodyGyro = Instance.new("BodyGyro", character.PrimaryPart)
-				bodyGyro.CFrame = character.PrimaryPart.CFrame
-				bodyGyro.MaxTorque = Vector3.new(9e9,9e9,9e9)
-				local bodyVel = Instance.new("BodyVelocity", character.PrimaryPart)
-				bodyVel.MaxForce = Vector3.new(9e9,9e9,9e9)
-				bodyVel.Velocity = Vector3.zero
-				local flyConn
-				flyConn = RunService.Heartbeat:Connect(function()
-					if not states.fly then flyConn:Disconnect(); return end
-					bodyGyro.CFrame = workspace.CurrentCamera.CFrame
-					local moveDir = Vector3.zero
-					if UIS:IsKeyDown(Enum.KeyCode.W) then moveDir += bodyGyro.CFrame.LookVector end
-					if UIS:IsKeyDown(Enum.KeyCode.S) then moveDir -= bodyGyro.CFrame.LookVector end
-					if UIS:IsKeyDown(Enum.KeyCode.A) then moveDir -= bodyGyro.CFrame.RightVector end
-					if UIS:IsKeyDown(Enum.KeyCode.D) then moveDir += bodyGyro.CFrame.RightVector end
-					if UIS:IsKeyDown(Enum.KeyCode.Space) then moveDir += Vector3.new(0,1,0) end
-					if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then moveDir -= Vector3.new(0,1,0) end
-					bodyVel.Velocity = moveDir * 50
+				local gyro = Instance.new("BodyGyro", root)
+				gyro.CFrame = root.CFrame
+				gyro.MaxTorque = Vector3.new(9e9,9e9,9e9)
+				local vel = Instance.new("BodyVelocity", root)
+				vel.MaxForce = Vector3.new(9e9,9e9,9e9)
+				local conn
+				conn = RunService.Heartbeat:Connect(function()
+					if not states.fly then conn:Disconnect(); return end
+					gyro.CFrame = workspace.CurrentCamera.CFrame
+					local dir = Vector3.zero
+					if UIS:IsKeyDown(Enum.KeyCode.W) then dir += gyro.CFrame.LookVector end
+					if UIS:IsKeyDown(Enum.KeyCode.S) then dir -= gyro.CFrame.LookVector end
+					if UIS:IsKeyDown(Enum.KeyCode.A) then dir -= gyro.CFrame.RightVector end
+					if UIS:IsKeyDown(Enum.KeyCode.D) then dir += gyro.CFrame.RightVector end
+					if UIS:IsKeyDown(Enum.KeyCode.Space) then dir += Vector3.new(0,1,0) end
+					if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then dir -= Vector3.new(0,1,0) end
+					vel.Velocity = dir * 50
 				end)
-				-- Cleanup on toggle off
-				local cleanup
-				cleanup = function()
-					if bodyGyro then bodyGyro:Destroy() end
-					if bodyVel then bodyVel:Destroy() end
-					if flyConn then flyConn:Disconnect() end
-					if hum then hum.PlatformStand = false end
-				end
 				task.spawn(function()
 					while states.fly do task.wait() end
-					cleanup()
+					conn:Disconnect()
+					gyro:Destroy()
+					vel:Destroy()
+					hum.PlatformStand = false
 				end)
 			end
-		else
-			-- The cleanup is handled by the watcher above
 		end
 	end,
 })
@@ -720,9 +653,9 @@ LocalTab:Toggle({
 		end
 		if state then
 			setNoclip()
-			states.noclipConn = RunService.Stepped:Connect(setNoclip)
+			threads.noclipConn = RunService.Stepped:Connect(setNoclip)
 		else
-			if states.noclipConn then states.noclipConn:Disconnect() end
+			if threads.noclipConn then threads.noclipConn:Disconnect() end
 			setNoclip()
 		end
 	end,
@@ -730,7 +663,6 @@ LocalTab:Toggle({
 
 -- ==================== VISUALS TAB ====================
 local VisualsTab = Window:Tab({ Title = "Visuals", Icon = "solar:eye-bold" })
-
 VisualsTab:Toggle({
 	Title = "Fullbright",
 	Callback = function(state)
@@ -747,24 +679,24 @@ VisualsTab:Toggle({
 		local espFolder = workspace:FindFirstChild("ESP_Folder") or Instance.new("Folder", workspace)
 		espFolder.Name = "ESP_Folder"
 		if not state then
-			for _, v in ipairs(espFolder:GetChildren()) do v:Destroy() end
+			espFolder:ClearAllChildren()
 			return
 		end
-		local function createESP(plr)
+		local function addESP(plr)
 			if plr == player then return end
-			local function onCharAdded(char)
-				local highlight = Instance.new("Highlight")
-				highlight.FillColor = Color3.fromRGB(255,0,0)
-				highlight.OutlineColor = Color3.fromRGB(255,255,255)
-				highlight.FillTransparency = 0.5
-				highlight.Adornee = char
-				highlight.Parent = espFolder
+			local function onChar(char)
+				local hl = Instance.new("Highlight")
+				hl.FillColor = Color3.fromRGB(255,0,0)
+				hl.OutlineColor = Color3.fromRGB(255,255,255)
+				hl.FillTransparency = 0.5
+				hl.Adornee = char
+				hl.Parent = espFolder
 			end
-			if plr.Character then onCharAdded(plr.Character) end
-			plr.CharacterAdded:Connect(onCharAdded)
+			if plr.Character then onChar(plr.Character) end
+			plr.CharacterAdded:Connect(onChar)
 		end
-		for _, plr in ipairs(Players:GetPlayers()) do createESP(plr) end
-		Players.PlayerAdded:Connect(createESP)
+		for _, plr in ipairs(Players:GetPlayers()) do addESP(plr) end
+		Players.PlayerAdded:Connect(addESP)
 	end,
 })
 
@@ -786,21 +718,16 @@ Window:Button({
 	Title = "STOP ALL",
 	Color = Color3.fromRGB(255,0,0),
 	Callback = function()
-		for name, _ in pairs(states) do
-			if type(states[name]) == "boolean" then
-				states[name] = false
-			end
+		for k, _ in pairs(states) do
+			if type(states[k]) == "boolean" then states[k] = false end
 		end
-		-- Cancel all threads
-		for name, thread in pairs(threads) do
-			task.cancel(thread)
+		for _, t in pairs(threads) do
+			if typeof(t) == "thread" then task.cancel(t) end
 		end
 		table.clear(threads)
-		-- Reset toggle UI to off (need references but we can skip)
 		WindUI:Notify({ Title = "Stopped", Content = "All tasks deactivated.", Duration = 2 })
 	end,
 })
 
--- ==================== Load Notification ====================
 WindUI:Notify({ Title = "Exploit Pack Loaded", Content = "All features ready!", Duration = 3 })
-print("Build Exploit Pack – Final Fixed Version Loaded")
+print("Build Exploit Pack – Stable Version Loaded")
