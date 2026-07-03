@@ -1,38 +1,57 @@
--- Build Exploit Pack – Final Optimized (WindUI)
--- All features working, remote calls optimized, no touch fling.
+-- Build Exploit Pack – Stable (WindUI)
+-- Loads WindUI, notifies if fail. All features included.
 
+-- Load WindUI safely
 local WindUI = nil
-pcall(function()
-    if game:GetService("RunService"):IsStudio() then
-        WindUI = require(game:GetService("ReplicatedStorage"):WaitForChild("WindUI"):WaitForChild("Init"))
+local function loadWindUI()
+    local success, result = pcall(function()
+        if identifyexecutor and identifyexecutor() == "Synapse X" or identifyexecutor() == "Krnl" then
+            -- For popular executors, use direct path
+            return loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
+        else
+            -- Try standard methods
+            if game:GetService("RunService"):IsStudio() then
+                return require(game:GetService("ReplicatedStorage"):WaitForChild("WindUI"):WaitForChild("Init"))
+            else
+                return loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
+            end
+        end
+    end)
+    if success then
+        WindUI = result
+        return true
     else
-        WindUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
+        warn("WindUI failed to load:", result)
+        return false
     end
-end)
-if not WindUI then
-    game:GetService("StarterGui"):SetCore("SendNotification",{Title="Error",Text="WindUI failed to load."})
+end
+
+if not loadWindUI() then
+    game:GetService("StarterGui"):SetCore("SendNotification", {
+        Title = "WindUI Error",
+        Text = "Failed to load UI library. Check your internet and executor.",
+        Duration = 10,
+    })
     return
 end
 
+-- Services
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local Lighting = game:GetService("Lighting")
 local player = Players.LocalPlayer
 
--- Character handling
-local character = nil
-local function updateChar()
-    character = player.Character
-    if character and not character:FindFirstChild("HumanoidRootPart") then character = nil end
-end
-updateChar()
-player.CharacterAdded:Connect(function(char)
+-- Character
+local character
+local function onChar(char)
     character = char
     char:WaitForChild("HumanoidRootPart")
-end)
+end
+if player.Character then onChar(player.Character) end
+player.CharacterAdded:Connect(onChar)
 
--- Remotes
+-- Remote events (make sure they exist)
 local events = game:GetService("ReplicatedStorage"):WaitForChild("Events")
 local placeRemote = events:WaitForChild("Place")          -- (blockType, CFrame, Baseplate)
 local destroyRemote = events:WaitForChild("DestroyBlock") -- (part)
@@ -40,41 +59,37 @@ local baseplate = workspace:WaitForChild("Baseplate", 10) or workspace
 local builtFolder = workspace:FindFirstChild("Built") or Instance.new("Folder", workspace)
 builtFolder.Name = "Built"
 
--- Fling
+-- Fling state
 getgenv().OldPos = nil
 getgenv().FPDH = workspace.FallenPartsDestroyHeight
 
--- Feature state manager
-local activeFeatures = {}  -- { [name] = { thread, flag } }
+-- Feature control
+local runningFeatures = {} -- name -> thread
+
 local function stopFeature(name)
-    if activeFeatures[name] then
-        activeFeatures[name].flag.running = false
-        task.cancel(activeFeatures[name].thread)
-        activeFeatures[name] = nil
+    if runningFeatures[name] then
+        task.cancel(runningFeatures[name])
+        runningFeatures[name] = nil
     end
 end
+
 local function startFeature(name, loopFunc)
     stopFeature(name)
-    local flag = { running = true }
-    local thread = task.spawn(function()
-        loopFunc(flag)
-    end)
-    activeFeatures[name] = { thread = thread, flag = flag }
+    runningFeatures[name] = task.spawn(loopFunc)
 end
 
--- ============ Utility ============
+-- Utility functions
 local function placeBlock(blockType, pos)
-    local bp = workspace:FindFirstChild("Baseplate") or workspace
     local cf = CFrame.new(math.round(pos.X), math.round(pos.Y), math.round(pos.Z))
     pcall(function()
-        placeRemote:InvokeServer(blockType, cf, bp)
+        placeRemote:InvokeServer(blockType, cf, baseplate)
     end)
 end
 
 local function cagePlayer(target)
     if not target or not target.Character or not target.Character.PrimaryPart then return end
     local root = target.Character.PrimaryPart
-    -- Teleport local player to target
+    -- Teleport local player to target for proximity
     if character and character.PrimaryPart then
         pcall(function() character:PivotTo(root.CFrame + Vector3.new(0,2,0)) end)
     end
@@ -97,8 +112,8 @@ local function destroyAllParts(folder)
     end
 end
 
--- Fling function unchanged
-local function SkidFling(target, flag)
+-- Fling function (unchanged, uses runningFeatures flag to stop)
+local function SkidFling(target)
     local char = character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     local root = hum and hum.RootPart
@@ -159,7 +174,7 @@ local function SkidFling(target, flag)
                     task.wait()
                 end
             end
-        until tick()-t0 > 2 or not flag.running
+        until tick()-t0 > 2 or not runningFeatures["fling"]
     end
 
     workspace.FallenPartsDestroyHeight = 0/0
@@ -175,12 +190,12 @@ local function SkidFling(target, flag)
             hum:ChangeState("GettingUp")
             for _, p in pairs(char:GetChildren()) do if p:IsA("BasePart") then p.Velocity, p.RotVelocity = Vector3.new(), Vector3.new() end end
             task.wait()
-        until (root.Position - getgenv().OldPos.p).Magnitude < 25 or not flag.running
+        until (root.Position - getgenv().OldPos.p).Magnitude < 25 or not runningFeatures["fling"]
         workspace.FallenPartsDestroyHeight = getgenv().FPDH
     end
 end
 
--- ============ UI ============
+-- UI
 local Window = WindUI:CreateWindow({
     Title = "Build Exploit Pack",
     Folder = "BuildExploit",
@@ -188,6 +203,7 @@ local Window = WindUI:CreateWindow({
     OpenButton = { Title = "Open", Enabled = true },
 })
 
+-- Helper to refresh dropdowns
 local function refreshDropdown(dd)
     local names = {}
     for _, plr in ipairs(Players:GetPlayers()) do
@@ -221,11 +237,13 @@ TargetActions:Toggle({
     Title = "Fling Target",
     Callback = function(state)
         if state then
-            startFeature("flingTarget", function(flag)
-                while flag.running do
+            startFeature("flingTarget", function()
+                while runningFeatures["flingTarget"] do
                     if not selectedTarget then task.wait(1); continue end
                     if not selectedTarget.Parent then selectedTarget = nil; break end
-                    SkidFling(selectedTarget, flag)
+                    runningFeatures["fling"] = runningFeatures["flingTarget"] -- pass flag
+                    SkidFling(selectedTarget)
+                    runningFeatures["fling"] = nil
                     task.wait(0.5)
                 end
             end)
@@ -236,8 +254,8 @@ TargetActions:Toggle({
     Title = "Cage Target",
     Callback = function(state)
         if state then
-            startFeature("cageTarget", function(flag)
-                while flag.running do
+            startFeature("cageTarget", function()
+                while runningFeatures["cageTarget"] do
                     if not selectedTarget then task.wait(1); continue end
                     cagePlayer(selectedTarget)
                     task.wait(0.5)
@@ -250,9 +268,9 @@ TargetActions:Toggle({
     Title = "Nuke Target",
     Callback = function(state)
         if state then
-            startFeature("nukeTarget", function(flag)
+            startFeature("nukeTarget", function()
                 local radius = 20
-                while flag.running do
+                while runningFeatures["nukeTarget"] do
                     if not selectedTarget then task.wait(0.5); continue end
                     local folder = builtFolder:FindFirstChild(selectedTarget.Name)
                     if not folder then task.wait(0.5); continue end
@@ -263,7 +281,7 @@ TargetActions:Toggle({
                         end
                     end)
                     for _, part in ipairs(parts) do
-                        if not flag.running then break end
+                        if not runningFeatures["nukeTarget"] then break end
                         if part and part.Parent then
                             if character and character.PrimaryPart then
                                 pcall(function() character:PivotTo(part.CFrame) end)
@@ -314,10 +332,15 @@ MainTab:Toggle({
     Title = "Fling All",
     Callback = function(state)
         if state then
-            startFeature("flingAll", function(flag)
-                while flag.running do
+            startFeature("flingAll", function()
+                while runningFeatures["flingAll"] do
                     for _, plr in ipairs(Players:GetPlayers()) do
-                        if plr ~= player then SkidFling(plr, flag); task.wait(0.8) end
+                        if plr ~= player then
+                            runningFeatures["fling"] = runningFeatures["flingAll"]
+                            SkidFling(plr)
+                            runningFeatures["fling"] = nil
+                            task.wait(0.8)
+                        end
                     end
                     task.wait(1)
                 end
@@ -329,8 +352,8 @@ MainTab:Toggle({
     Title = "Cage All",
     Callback = function(state)
         if state then
-            startFeature("cageAll", function(flag)
-                while flag.running do
+            startFeature("cageAll", function()
+                while runningFeatures["cageAll"] do
                     for _, plr in ipairs(Players:GetPlayers()) do
                         if plr ~= player then cagePlayer(plr); task.wait(0.5) end
                     end
@@ -344,9 +367,9 @@ MainTab:Toggle({
     Title = "Nuke All",
     Callback = function(state)
         if state then
-            startFeature("nukeAll", function(flag)
+            startFeature("nukeAll", function()
                 local radius = 20
-                while flag.running do
+                while runningFeatures["nukeAll"] do
                     local parts = {}
                     pcall(function()
                         for _, v in ipairs(builtFolder:GetDescendants()) do
@@ -354,7 +377,7 @@ MainTab:Toggle({
                         end
                     end)
                     for _, part in ipairs(parts) do
-                        if not flag.running then break end
+                        if not runningFeatures["nukeAll"] then break end
                         if part and part.Parent then
                             if character and character.PrimaryPart then
                                 pcall(function() character:PivotTo(part.CFrame) end)
@@ -408,8 +431,8 @@ AuraTab:Toggle({
     Title = "Destroy Aura",
     Callback = function(state)
         if state then
-            startFeature("aura", function(flag)
-                while flag.running do
+            startFeature("aura", function()
+                while runningFeatures["aura"] do
                     local t = auraTarget
                     if t and t.Character and t.Character.PrimaryPart then
                         local tpos = t.Character.PrimaryPart.Position
@@ -454,11 +477,10 @@ SpammerTab:Toggle({
     Title = "Block Spammer",
     Callback = function(state)
         if state then
-            startFeature("spammer", function(flag)
-                while flag.running do
+            startFeature("spammer", function()
+                while runningFeatures["spammer"] do
                     if character and character.PrimaryPart then
                         local center = character.PrimaryPart.Position
-                        -- 20-stud radius, random spherical position
                         local r = math.random() * 20
                         local theta = math.random() * math.pi*2
                         local phi = math.random() * math.pi
@@ -501,9 +523,9 @@ LocalTab:Toggle({
                 gyro.CFrame = character.PrimaryPart.CFrame; gyro.MaxTorque = Vector3.new(9e9,9e9,9e9)
                 local vel = Instance.new("BodyVelocity", character.PrimaryPart)
                 vel.MaxForce = Vector3.new(9e9,9e9,9e9)
-                startFeature("fly", function(flag)
+                startFeature("fly", function()
                     local conn = RunService.Heartbeat:Connect(function()
-                        if not flag.running then conn:Disconnect(); return end
+                        if not runningFeatures["fly"] then conn:Disconnect(); return end
                         gyro.CFrame = workspace.CurrentCamera.CFrame
                         local dir = Vector3.zero
                         if UIS:IsKeyDown(Enum.KeyCode.W) then dir += gyro.CFrame.LookVector end
@@ -514,7 +536,7 @@ LocalTab:Toggle({
                         if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then dir -= Vector3.new(0,1,0) end
                         vel.Velocity = dir * 50
                     end)
-                    while flag.running do task.wait() end
+                    while runningFeatures["fly"] do task.wait() end
                     conn:Disconnect()
                     gyro:Destroy(); vel:Destroy()
                     hum.PlatformStand = false
@@ -533,8 +555,8 @@ LocalTab:Toggle({
             end
             apply()
             local conn = RunService.Stepped:Connect(apply)
-            startFeature("noclip", function(flag)
-                while flag.running do task.wait() end
+            startFeature("noclip", function()
+                while runningFeatures["noclip"] do task.wait() end
                 conn:Disconnect()
                 if character then for _, p in ipairs(character:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide = true end end end
             end)
@@ -592,10 +614,12 @@ Window:Button({
     Title = "STOP ALL",
     Color = Color3.fromRGB(255,0,0),
     Callback = function()
-        for name in pairs(activeFeatures) do stopFeature(name) end
+        for name in pairs(runningFeatures) do
+            stopFeature(name)
+        end
         WindUI:Notify({ Title = "Stopped", Content = "All tasks deactivated." })
     end,
 })
 
-WindUI:Notify({ Title = "Build Exploit Pack", Content = "All features optimized and ready." })
-print("Build Exploit Pack – Final Optimized Loaded.")
+WindUI:Notify({ Title = "Build Exploit Pack", Content = "All features ready!" })
+print("Build Exploit Pack – Stable Loaded.")
