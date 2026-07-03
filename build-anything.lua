@@ -1,5 +1,7 @@
 -- Build Exploit Pack – WindUI Edition (Stable & Working)
 -- Touch Fling removed, all features re‑implemented with proper thread control.
+-- Nuke All / Nuke Target: teleports to each part, deletes all within 20-stud radius.
+-- Place Blocks button added in Main tab.
 
 local WindUI = nil
 pcall(function()
@@ -58,7 +60,7 @@ local function startFeature(name, loopFunc)
     activeFeatures[name] = { thread = thread, running = flag }
 end
 
--- Place block helper (exact remote call)
+-- Place block helper (identity rotation, rounded coordinates)
 local function placeBlock(blockType, pos)
     local bp = workspace:FindFirstChild("Baseplate") or workspace
     local roundedPos = Vector3.new(math.round(pos.X), math.round(pos.Y), math.round(pos.Z))
@@ -350,6 +352,46 @@ MainTab:Section({ Title = "Destroy All" }):Button({
     end,
 })
 
+-- Place Blocks (Once) – from original working script
+MainTab:Button({
+    Title = "🧱 PLACE BLOCKS (Once)",
+    Callback = function()
+        local totalBlocks = 5000
+        local heightLayers = 1
+        local bp = workspace:FindFirstChild("Baseplate")
+        if not bp then
+            WindUI:Notify({ Title = "Error", Content = "No Baseplate" })
+            return
+        end
+        local centerPos = character and character.PrimaryPart and character.PrimaryPart.Position or Vector3.new(0,2,0)
+        local blocksPerLayer = math.ceil(totalBlocks / heightLayers)
+        local gridSize = math.ceil(math.sqrt(blocksPerLayer))
+        local blockType = "Oak Planks"
+        local placed = 0
+        for layer = 0, heightLayers - 1 do
+            local count = 0
+            for x = -gridSize, gridSize do
+                for z = -gridSize, gridSize do
+                    if count >= blocksPerLayer then break end
+                    task.spawn(function()
+                        local posX = centerPos.X + (x * 4)
+                        local posZ = centerPos.Z + (z * 4)
+                        local posY = centerPos.Y + (layer * 4) + 2
+                        local cf = CFrame.new(posX, posY, posZ)
+                        pcall(function()
+                            placeRemote:InvokeServer(blockType, cf, bp)
+                            placed = placed + 1
+                        end)
+                    end)
+                    count = count + 1
+                end
+                if count >= blocksPerLayer then break end
+            end
+        end
+        WindUI:Notify({ Title = "Placing", Content = "5000 blocks queued." })
+    end,
+})
+
 -- Fling All
 MainTab:Toggle({
     Title = "Fling All",
@@ -394,7 +436,7 @@ MainTab:Toggle({
     end,
 })
 
--- Nuke All
+-- Nuke All (Teleport Delete)
 MainTab:Toggle({
     Title = "Nuke All",
     Callback = function(state)
@@ -517,27 +559,35 @@ AuraTab:Slider({ Title = "Orbit Dist", Step = 1, Value = { Min = 5, Max = 50, De
 
 -- ==================== SPAMMER TAB ====================
 local SpammerTab = Window:Tab({ Title = "Spammer", Icon = "solar:layers-bold" })
-local spamDelay = 0.1
+local spamDelay = 0.05
 
 SpammerTab:Toggle({
-    Title = "Block Spammer",
+    Title = "Block Spammer (Sphere Fill)",
     Callback = function(state)
         if state then
             startFeature("spammer", function(flag)
+                local radius = 20
                 while flag.running do
                     if character and character.PrimaryPart then
                         local center = character.PrimaryPart.Position
-                        local r = math.random() * 20
-                        local theta = math.random() * math.pi*2
-                        local phi = math.random() * math.pi
-                        local pos = center + Vector3.new(
-                            r * math.cos(theta) * math.sin(phi),
-                            r * math.sin(theta) * math.sin(phi),
-                            r * math.cos(phi)
-                        )
-                        placeBlock("Glass", pos)
+                        for x = -radius, radius do
+                            if not flag.running then break end
+                            for y = -radius, radius do
+                                if not flag.running then break end
+                                for z = -radius, radius do
+                                    if not flag.running then break end
+                                    local pos = Vector3.new(center.X+x, center.Y+y, center.Z+z)
+                                    if (pos - center).Magnitude <= radius then
+                                        placeBlock("Glass", pos)
+                                        if spamDelay > 0 then task.wait(spamDelay) end
+                                    end
+                                end
+                            end
+                        end
+                        task.wait(0.5) -- pause between sphere fills
+                    else
+                        task.wait(1)
                     end
-                    task.wait(spamDelay)
                 end
             end)
         else
@@ -545,7 +595,7 @@ SpammerTab:Toggle({
         end
     end,
 })
-SpammerTab:Slider({ Title = "Delay (s)", Step = 0.01, Value = { Min = 0.01, Max = 2, Default = 0.1 }, Callback = function(v) spamDelay = v end })
+SpammerTab:Slider({ Title = "Delay (s)", Step = 0.001, Value = { Min = 0, Max = 0.5, Default = 0.05 }, Callback = function(v) spamDelay = v end })
 
 -- ==================== LOCAL PLAYER TAB ====================
 local LocalTab = Window:Tab({ Title = "Local", Icon = "solar:user-speak-bold" })
