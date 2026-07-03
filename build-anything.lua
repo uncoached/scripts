@@ -1,7 +1,5 @@
--- Build Exploit Pack – WindUI Edition (Stable & Working)
--- Touch Fling removed, all features re‑implemented with proper thread control.
--- Nuke All / Nuke Target: teleports to each part, deletes all within 20-stud radius.
--- Place Blocks button added in Main tab.
+-- Build Exploit Pack – WindUI Edition (Placing Speed Slider)
+-- All features, placeBlock uses exact CFrame, Place Blocks (Once) has a configurable delay.
 
 local WindUI = nil
 pcall(function()
@@ -40,9 +38,8 @@ builtFolder.Name = "Built"
 getgenv().OldPos = nil
 getgenv().FPDH = workspace.FallenPartsDestroyHeight
 
--- Thread tracking: store { thread, runningFlag }
+-- Thread tracking
 local activeFeatures = {}
-
 local function stopFeature(name)
     if activeFeatures[name] then
         activeFeatures[name].running = false
@@ -50,7 +47,6 @@ local function stopFeature(name)
         activeFeatures[name] = nil
     end
 end
-
 local function startFeature(name, loopFunc)
     stopFeature(name)
     local flag = { running = true }
@@ -60,33 +56,28 @@ local function startFeature(name, loopFunc)
     activeFeatures[name] = { thread = thread, running = flag }
 end
 
--- Place block helper (identity rotation, rounded coordinates)
+-- Place block helper – exact CFrame as required
 local function placeBlock(blockType, pos)
     local bp = workspace:FindFirstChild("Baseplate") or workspace
     local roundedPos = Vector3.new(math.round(pos.X), math.round(pos.Y), math.round(pos.Z))
+    local cf = CFrame.new(roundedPos.X, roundedPos.Y, roundedPos.Z, 0, 0, 1, 0, 1, 0, -1, 0, 0)
     pcall(function()
-        placeRemote:InvokeServer(blockType, CFrame.new(roundedPos), bp)
+        placeRemote:InvokeServer(blockType, cf, bp)
     end)
 end
 
--- Cage a player (teleport & place)
+-- Cage a player
 local function cagePlayer(target)
     if not target or not target.Character or not target.Character.PrimaryPart then return end
     local root = target.Character.PrimaryPart
-    -- Teleport local player for proximity
     if character and character.PrimaryPart then
         pcall(function() character:PivotTo(root.CFrame + Vector3.new(0,2,0)) end)
     end
     local center = root.Position
-    for x = -2, 2 do
-        for y = -2, 2 do
-            for z = -2, 2 do
-                if x == 0 and y == 0 and z == 0 then continue end
-                local pos = center + Vector3.new(x*4, y*4, z*4)
-                placeBlock("Glass", pos)
-            end
-        end
-    end
+    for x = -2,2 do for y = -2,2 do for z = -2,2 do
+        if x==0 and y==0 and z==0 then continue end
+        placeBlock("Glass", center + Vector3.new(x*4, y*4, z*4))
+    end end end
 end
 
 -- Destroy all parts in folder
@@ -98,7 +89,7 @@ local function destroyAllParts(folder)
     end
 end
 
--- Fling function (unchanged, uses flag from activeFeatures)
+-- Fling function (unchanged)
 local function SkidFling(TargetPlayer, flag)
     local Character = character
     local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
@@ -113,9 +104,7 @@ local function SkidFling(TargetPlayer, flag)
     local Handle = Accessory and Accessory:FindFirstChild("Handle")
 
     if Character and Humanoid and RootPart then
-        if RootPart.Velocity.Magnitude < 50 then
-            getgenv().OldPos = RootPart.CFrame
-        end
+        if RootPart.Velocity.Magnitude < 50 then getgenv().OldPos = RootPart.CFrame end
         if THumanoid and THumanoid.Sit then return end
         if THead then workspace.CurrentCamera.CameraSubject = THead
         elseif Handle then workspace.CurrentCamera.CameraSubject = Handle
@@ -197,7 +186,7 @@ local function SkidFling(TargetPlayer, flag)
     end
 end
 
--- ==================== UI Creation ====================
+-- ==================== UI ====================
 local Window = WindUI:CreateWindow({
     Title = "Build Exploit Pack",
     Folder = "BuildExploit",
@@ -205,7 +194,6 @@ local Window = WindUI:CreateWindow({
     OpenButton = { Title = "Open", Enabled = true },
 })
 
--- Helper to refresh dropdowns
 local function refreshDropdown(dropdown)
     local names = {}
     for _, plr in ipairs(Players:GetPlayers()) do
@@ -214,25 +202,17 @@ local function refreshDropdown(dropdown)
     dropdown:Refresh(names)
 end
 
--- ==================== TARGET TAB ====================
+-- TARGET TAB
 local TargetTab = Window:Tab({ Title = "Target", Icon = "solar:user-bold" })
 local selectedTarget = nil
-
 local targetDropdown = TargetTab:Section({ Title = "Select Target" }):Dropdown({
-    Title = "Target Player",
-    Values = {},
-    AllowNone = true,
+    Title = "Target Player", Values = {}, AllowNone = true,
     Callback = function(value)
         if value then
             for _, plr in ipairs(Players:GetPlayers()) do
-                if plr.Name == value and plr ~= player then
-                    selectedTarget = plr
-                    return
-                end
+                if plr.Name == value and plr ~= player then selectedTarget = plr return end
             end
-        else
-            selectedTarget = nil
-        end
+        else selectedTarget = nil end
     end,
 })
 refreshDropdown(targetDropdown)
@@ -244,7 +224,6 @@ end)
 
 local TargetActions = TargetTab:Section({ Title = "Actions" })
 
--- Fling Target
 TargetActions:Toggle({
     Title = "Fling Target",
     Callback = function(state)
@@ -257,13 +236,10 @@ TargetActions:Toggle({
                     task.wait(0.5)
                 end
             end)
-        else
-            stopFeature("flingTarget")
-        end
+        else stopFeature("flingTarget") end
     end,
 })
 
--- Cage Target
 TargetActions:Toggle({
     Title = "Cage Target",
     Callback = function(state)
@@ -275,13 +251,10 @@ TargetActions:Toggle({
                     task.wait(0.5)
                 end
             end)
-        else
-            stopFeature("cageTarget")
-        end
+        else stopFeature("cageTarget") end
     end,
 })
 
--- Nuke Target (Teleport Delete) – safe, limited per sweep
 TargetActions:Toggle({
     Title = "Nuke Target",
     Callback = function(state)
@@ -322,13 +295,10 @@ TargetActions:Toggle({
                     task.wait(0.3)
                 end
             end)
-        else
-            stopFeature("nukeTarget")
-        end
+        else stopFeature("nukeTarget") end
     end,
 })
 
--- Teleport to Target
 TargetActions:Button({
     Title = "Teleport to Target",
     Callback = function()
@@ -340,7 +310,7 @@ TargetActions:Button({
     end,
 })
 
--- ==================== MAIN TAB ====================
+-- MAIN TAB
 local MainTab = Window:Tab({ Title = "Main", Icon = "solar:globus-bold" })
 
 MainTab:Section({ Title = "Destroy All" }):Button({
@@ -352,7 +322,8 @@ MainTab:Section({ Title = "Destroy All" }):Button({
     end,
 })
 
--- Place Blocks (Once) – from original working script
+-- Place Blocks (Once) with speed slider
+local placeDelay = 0.005  -- default 5ms between blocks
 MainTab:Button({
     Title = "🧱 PLACE BLOCKS (Once)",
     Callback = function()
@@ -368,28 +339,35 @@ MainTab:Button({
         local gridSize = math.ceil(math.sqrt(blocksPerLayer))
         local blockType = "Oak Planks"
         local placed = 0
+        -- Sequential loop with small delay to avoid throttling
         for layer = 0, heightLayers - 1 do
             local count = 0
             for x = -gridSize, gridSize do
                 for z = -gridSize, gridSize do
                     if count >= blocksPerLayer then break end
-                    task.spawn(function()
-                        local posX = centerPos.X + (x * 4)
-                        local posZ = centerPos.Z + (z * 4)
-                        local posY = centerPos.Y + (layer * 4) + 2
-                        local cf = CFrame.new(posX, posY, posZ)
-                        pcall(function()
-                            placeRemote:InvokeServer(blockType, cf, bp)
-                            placed = placed + 1
-                        end)
+                    local posX = centerPos.X + (x * 4)
+                    local posZ = centerPos.Z + (z * 4)
+                    local posY = centerPos.Y + (layer * 4) + 2
+                    local cf = CFrame.new(posX, posY, posZ, 0, 0, 1, 0, 1, 0, -1, 0, 0)
+                    pcall(function()
+                        placeRemote:InvokeServer(blockType, cf, bp)
+                        placed = placed + 1
                     end)
                     count = count + 1
+                    if placeDelay > 0 then task.wait(placeDelay) end
                 end
                 if count >= blocksPerLayer then break end
             end
         end
-        WindUI:Notify({ Title = "Placing", Content = "5000 blocks queued." })
+        WindUI:Notify({ Title = "Placed", Content = "Placed " .. placed .. " blocks." })
     end,
+})
+
+MainTab:Slider({
+    Title = "Place Delay (s)",
+    Step = 0.001,
+    Value = { Min = 0, Max = 0.1, Default = 0.005 },
+    Callback = function(v) placeDelay = v end,
 })
 
 -- Fling All
@@ -408,9 +386,7 @@ MainTab:Toggle({
                     task.wait(1)
                 end
             end)
-        else
-            stopFeature("flingAll")
-        end
+        else stopFeature("flingAll") end
     end,
 })
 
@@ -430,13 +406,11 @@ MainTab:Toggle({
                     task.wait(1)
                 end
             end)
-        else
-            stopFeature("cageAll")
-        end
+        else stopFeature("cageAll") end
     end,
 })
 
--- Nuke All (Teleport Delete)
+-- Nuke All
 MainTab:Toggle({
     Title = "Nuke All",
     Callback = function(state)
@@ -474,30 +448,21 @@ MainTab:Toggle({
                     task.wait(0.3)
                 end
             end)
-        else
-            stopFeature("nukeAll")
-        end
+        else stopFeature("nukeAll") end
     end,
 })
 
--- ==================== AURA TAB ====================
+-- AURA TAB
 local AuraTab = Window:Tab({ Title = "Aura", Icon = "solar:star-bold" })
 local auraTarget = nil
 local auraDropdown = AuraTab:Section({ Title = "Aura Target" }):Dropdown({
-    Title = "Select Target",
-    Values = {},
-    AllowNone = true,
+    Title = "Select Target", Values = {}, AllowNone = true,
     Callback = function(value)
         if value then
             for _, plr in ipairs(Players:GetPlayers()) do
-                if plr.Name == value and plr ~= player then
-                    auraTarget = plr
-                    return
-                end
+                if plr.Name == value and plr ~= player then auraTarget = plr return end
             end
-        else
-            auraTarget = nil
-        end
+        else auraTarget = nil end
     end,
 })
 refreshDropdown(auraDropdown)
@@ -548,19 +513,16 @@ AuraTab:Toggle({
                     task.wait()
                 end
             end)
-        else
-            stopFeature("aura")
-        end
+        else stopFeature("aura") end
     end,
 })
 AuraTab:Slider({ Title = "Speed", Step = 0.01, Value = { Min = 0.05, Max = 1, Default = 0.3 }, Callback = function(v) auraSpeed = v end })
 AuraTab:Slider({ Title = "Clear Dist", Step = 1, Value = { Min = 5, Max = 50, Default = 20 }, Callback = function(v) auraClear = v end })
 AuraTab:Slider({ Title = "Orbit Dist", Step = 1, Value = { Min = 5, Max = 50, Default = 20 }, Callback = function(v) auraOrbit = v end })
 
--- ==================== SPAMMER TAB ====================
+-- SPAMMER TAB
 local SpammerTab = Window:Tab({ Title = "Spammer", Icon = "solar:layers-bold" })
 local spamDelay = 0.05
-
 SpammerTab:Toggle({
     Title = "Block Spammer (Sphere Fill)",
     Callback = function(state)
@@ -584,22 +546,19 @@ SpammerTab:Toggle({
                                 end
                             end
                         end
-                        task.wait(0.5) -- pause between sphere fills
+                        task.wait(0.5)
                     else
                         task.wait(1)
                     end
                 end
             end)
-        else
-            stopFeature("spammer")
-        end
+        else stopFeature("spammer") end
     end,
 })
 SpammerTab:Slider({ Title = "Delay (s)", Step = 0.001, Value = { Min = 0, Max = 0.5, Default = 0.05 }, Callback = function(v) spamDelay = v end })
 
--- ==================== LOCAL PLAYER TAB ====================
+-- LOCAL PLAYER TAB
 local LocalTab = Window:Tab({ Title = "Local", Icon = "solar:user-speak-bold" })
-
 LocalTab:Slider({ Title = "WalkSpeed", Step = 1, Value = { Min = 16, Max = 200, Default = 16 }, Callback = function(v)
     if character and character:FindFirstChildOfClass("Humanoid") then character:FindFirstChildOfClass("Humanoid").WalkSpeed = v end
 end })
@@ -623,8 +582,7 @@ LocalTab:Toggle({
                 local vel = Instance.new("BodyVelocity", character.PrimaryPart)
                 vel.MaxForce = Vector3.new(9e9,9e9,9e9)
                 startFeature("fly", function(flag)
-                    local conn
-                    conn = RunService.Heartbeat:Connect(function()
+                    local conn = RunService.Heartbeat:Connect(function()
                         if not flag.running then conn:Disconnect(); return end
                         gyro.CFrame = workspace.CurrentCamera.CFrame
                         local dir = Vector3.zero
@@ -638,14 +596,11 @@ LocalTab:Toggle({
                     end)
                     while flag.running do task.wait() end
                     conn:Disconnect()
-                    gyro:Destroy()
-                    vel:Destroy()
+                    gyro:Destroy(); vel:Destroy()
                     hum.PlatformStand = false
                 end)
             end
-        else
-            stopFeature("fly")
-        end
+        else stopFeature("fly") end
     end,
 })
 
@@ -654,32 +609,21 @@ LocalTab:Toggle({
     Callback = function(state)
         if state then
             local function apply()
-                if character then
-                    for _, p in ipairs(character:GetDescendants()) do
-                        if p:IsA("BasePart") then p.CanCollide = false end
-                    end
-                end
+                if character then for _, p in ipairs(character:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide = false end end end
             end
             apply()
             local conn = RunService.Stepped:Connect(apply)
             startFeature("noclip", function(flag)
                 while flag.running do task.wait() end
                 conn:Disconnect()
-                if character then
-                    for _, p in ipairs(character:GetDescendants()) do
-                        if p:IsA("BasePart") then p.CanCollide = true end
-                    end
-                end
+                if character then for _, p in ipairs(character:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide = true end end end
             end)
-        else
-            stopFeature("noclip")
-        end
+        else stopFeature("noclip") end
     end,
 })
 
--- ==================== VISUALS TAB ====================
+-- VISUALS TAB
 local VisualsTab = Window:Tab({ Title = "Visuals", Icon = "solar:eye-bold" })
-
 VisualsTab:Toggle({
     Title = "Fullbright",
     Callback = function(state)
@@ -689,13 +633,12 @@ VisualsTab:Toggle({
         Lighting.GlobalShadows = not state
     end,
 })
-
 VisualsTab:Toggle({
     Title = "Player ESP",
     Callback = function(state)
         local espFolder = workspace:FindFirstChild("ESP_Folder") or Instance.new("Folder", workspace)
         espFolder.Name = "ESP_Folder"
-        if not state then espFolder:ClearAllChildren() return end
+        if not state then espFolder:ClearAllChildren(); return end
         local function addESP(plr)
             if plr == player then return end
             local function onChar(char)
@@ -713,31 +656,26 @@ VisualsTab:Toggle({
         Players.PlayerAdded:Connect(addESP)
     end,
 })
-
 VisualsTab:Toggle({
     Title = "Wireframe",
     Callback = function(state)
         for _, obj in ipairs(workspace:GetDescendants()) do
             if obj:IsA("BasePart") then
-                pcall(function()
-                    obj.Material = state and Enum.Material.Wireframe or Enum.Material.Plastic
-                end)
+                pcall(function() obj.Material = state and Enum.Material.Wireframe or Enum.Material.Plastic end)
             end
         end
     end,
 })
 
--- ==================== STOP ALL ====================
+-- STOP ALL
 Window:Button({
     Title = "STOP ALL",
     Color = Color3.fromRGB(255,0,0),
     Callback = function()
-        for name in pairs(activeFeatures) do
-            stopFeature(name)
-        end
+        for name in pairs(activeFeatures) do stopFeature(name) end
         WindUI:Notify({ Title = "Stopped", Content = "All tasks deactivated." })
     end,
 })
 
 WindUI:Notify({ Title = "Build Exploit Pack", Content = "All features ready!" })
-print("Build Exploit Pack – Working version loaded.")
+print("Build Exploit Pack – With Place Speed Slider loaded.")
