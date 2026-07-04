@@ -1,4 +1,4 @@
--- Adapted Build Exploit Pack – Cage teleports, blocks destroyed from Debris, TNT spam added
+-- Fully adapted Build Exploit Pack – 50 concurrent placements, Debris models, teleport cage, TNT spam.
 -- Remotes: ReplicatedStorage.Remotes.DestroyBlock (FireServer with Model)
 --          ReplicatedStorage.Remotes.PlaceBlock (InvokeServer with blockType, CFrame)
 
@@ -27,15 +27,16 @@ end
 if player.Character then onCharAdded(player.Character) end
 player.CharacterAdded:Connect(onCharAdded)
 
--- Remotes
+-- Remotes (paths from spy)
 local remotes = game:GetService("ReplicatedStorage"):WaitForChild("Remotes")
 local placeRemote = remotes:WaitForChild("PlaceBlock")   -- InvokeServer(blockType, CFrame)
 local destroyRemote = remotes:WaitForChild("DestroyBlock") -- FireServer(Model)
 
--- Placed blocks location
-local function getDebrisPlacedFolder()
+-- Placed blocks storage (from spy)
+local function getPlacedBlocksFolder()
     local debris = workspace:FindFirstChild("Debris")
-    return debris and debris:FindFirstChild("PlacedBlocks")
+    if not debris then return nil end
+    return debris:FindFirstChild("PlacedBlocks")
 end
 
 -- Fling globals
@@ -60,8 +61,8 @@ local function startFeature(name, loopFunc)
     activeFeatures[name] = { thread = thread, running = flag }
 end
 
--- ==================== Concurrent Block Placer (30 max) ====================
-local MAX_CONCURRENT_PLACE = 30
+-- ==================== Concurrent Block Placer (50 max) ====================
+local MAX_CONCURRENT_PLACE = 50
 local placeActive = 0
 local placeQueue = {}
 
@@ -92,25 +93,22 @@ local function waitForAllPlacements()
     repeat task.wait() until #placeQueue == 0 and placeActive == 0
 end
 
--- Place block helper – for throttled placing (non-cage)
+-- Place block helper – for all throttled placing
 local function placeBlock(blockType, pos)
     local roundedPos = Vector3.new(math.round(pos.X), math.round(pos.Y), math.round(pos.Z))
     local cf = CFrame.new(roundedPos.X, roundedPos.Y, roundedPos.Z, 0, 0, 1, 0, 1, 0, -1, 0, 0)
     placeBlockThrottled(blockType, cf)
 end
 
--- Destroy a single part by wrapping it in a Model for the remote
-local function destroyPart(part)
-    if not part or not part.Parent then return end
-    local tempModel = Instance.new("Model")
-    part.Parent = tempModel
+-- Destroy a placed block model (expects a Model from Debris/PlacedBlocks)
+local function destroyBlockModel(model)
+    if not model or not model.Parent then return end
     pcall(function()
-        destroyRemote:FireServer(tempModel)
+        destroyRemote:FireServer(model)
     end)
-    tempModel:Destroy()
 end
 
--- ==================== INSTANT CAGE (teleports local player, spawns all blocks at once) ====================
+-- ==================== INSTANT CAGE (teleports local player, spawns all blocks via throttler) ====================
 local function cagePlayer(target)
     if not target or not target.Character or not target.Character.PrimaryPart then return end
     local root = target.Character.PrimaryPart
@@ -120,41 +118,36 @@ local function cagePlayer(target)
     end
     local center = root.Position
     local blockType = "Glass"
+    -- Queue all 124 blocks through the fast throttler (50 concurrent ensures near-instant)
     for x = -2,2 do
         for y = -2,2 do
             for z = -2,2 do
                 if x==0 and y==0 and z==0 then continue end
                 local pos = center + Vector3.new(x*4, y*4, z*4)
-                local roundedPos = Vector3.new(math.round(pos.X), math.round(pos.Y), math.round(pos.Z))
-                local cf = CFrame.new(roundedPos.X, roundedPos.Y, roundedPos.Z, 0, 0, 1, 0, 1, 0, -1, 0, 0)
-                task.spawn(function()
-                    pcall(function()
-                        placeRemote:InvokeServer(blockType, cf)
-                    end)
-                end)
+                placeBlock(blockType, pos)  -- uses the throttler
             end
         end
     end
 end
 
--- Destroy all placed blocks across all players in Debris
+-- Destroy all placed blocks (all models in Debris/PlacedBlocks/*)
 local function destroyAllPlacedBlocks()
-    local placed = getDebrisPlacedFolder()
+    local placed = getPlacedBlocksFolder()
     if not placed then return end
-    for _, playerFolder in ipairs(placed:GetChildren()) do
-        if playerFolder:IsA("Folder") then
-            for _, v in ipairs(playerFolder:GetDescendants()) do
-                if v:IsA("BasePart") then
-                    task.spawn(function() destroyPart(v) end)
+    for _, userFolder in ipairs(placed:GetChildren()) do
+        if userFolder:IsA("Folder") then
+            for _, blockModel in ipairs(userFolder:GetChildren()) do
+                if blockModel:IsA("Model") then
+                    task.spawn(function() destroyBlockModel(blockModel) end)
                 end
             end
         end
     end
 end
 
--- Get target player's placed folder in Debris
+-- Get target player's placed block folder
 local function getTargetPlacedFolder(targetPlayer)
-    local placed = getDebrisPlacedFolder()
+    local placed = getPlacedBlocksFolder()
     if not placed then return nil end
     return placed:FindFirstChild(targetPlayer.Name)
 end
@@ -317,8 +310,8 @@ TargetActions:Toggle({
             startFeature("cageTarget", function(flag)
                 while flag.running do
                     if not selectedTarget then task.wait(1); continue end
-                    cagePlayer(selectedTarget)  -- teleports + instant blocks
-                    task.wait(0.01)  -- extremely rapid follow
+                    cagePlayer(selectedTarget)  -- teleports + places blocks fast
+                    task.wait(0.01)  -- rapid follow
                 end
             end)
         else stopFeature("cageTarget") end
@@ -335,12 +328,10 @@ TargetActions:Toggle({
                         task.wait(0.5); continue
                     end
                     local root = selectedTarget.Character.PrimaryPart
-                    -- teleport above target
                     if character and character.PrimaryPart then
                         pcall(function() character:PivotTo(root.CFrame + Vector3.new(0,2,0)) end)
                     end
                     local center = root.Position
-                    -- spam TNT blocks in a 5x5x5 cube
                     for x = -2,2 do
                         for y = -2,2 do
                             for z = -2,2 do
@@ -366,29 +357,30 @@ TargetActions:Toggle({
                     if not selectedTarget then task.wait(0.5); continue end
                     local folder = getTargetPlacedFolder(selectedTarget)
                     if not folder then task.wait(0.5); continue end
-                    local parts = {}
+                    -- collect all models in the target's folder
+                    local models = {}
                     pcall(function()
-                        for _, v in ipairs(folder:GetDescendants()) do
-                            if v:IsA("BasePart") and v.Parent then table.insert(parts, v) end
+                        for _, blockModel in ipairs(folder:GetChildren()) do
+                            if blockModel:IsA("Model") then table.insert(models, blockModel) end
                         end
                     end)
-                    for _, part in ipairs(parts) do
+                    for _, model in ipairs(models) do
                         if not flag.running then break end
-                        if part and part.Parent then
+                        if model and model.PrimaryPart then
+                            -- teleport to model
                             if character and character.PrimaryPart then
-                                pcall(function() character:PivotTo(part.CFrame) end)
+                                pcall(function() character:PivotTo(model.PrimaryPart.CFrame) end)
                             end
-                            local pos = part.Position
+                            local pos = model.PrimaryPart.Position
+                            -- collect nearby models to delete
                             local toDelete = {}
-                            pcall(function()
-                                for _, v in ipairs(folder:GetDescendants()) do
-                                    if v:IsA("BasePart") and v.Parent and (v.Position - pos).Magnitude <= radius then
-                                        table.insert(toDelete, v)
-                                    end
+                            for _, other in ipairs(models) do
+                                if other.PrimaryPart and (other.PrimaryPart.Position - pos).Magnitude <= radius then
+                                    table.insert(toDelete, other)
                                 end
-                            end)
+                            end
                             for _, d in ipairs(toDelete) do
-                                task.spawn(function() destroyPart(d) end)
+                                task.spawn(function() destroyBlockModel(d) end)
                             end
                             task.wait(0.05)
                         end
@@ -501,39 +493,33 @@ MainTab:Toggle({
             startFeature("nukeAll", function(flag)
                 local radius = 20
                 while flag.running do
-                    local placed = getDebrisPlacedFolder()
+                    local placed = getPlacedBlocksFolder()
                     if not placed then task.wait(0.5); continue end
-                    local parts = {}
+                    local allModels = {}
                     pcall(function()
-                        for _, folder in ipairs(placed:GetChildren()) do
-                            if folder:IsA("Folder") then
-                                for _, v in ipairs(folder:GetDescendants()) do
-                                    if v:IsA("BasePart") and v.Parent then table.insert(parts, v) end
+                        for _, userFolder in ipairs(placed:GetChildren()) do
+                            if userFolder:IsA("Folder") then
+                                for _, blockModel in ipairs(userFolder:GetChildren()) do
+                                    if blockModel:IsA("Model") then table.insert(allModels, blockModel) end
                                 end
                             end
                         end
                     end)
-                    for _, part in ipairs(parts) do
+                    for _, model in ipairs(allModels) do
                         if not flag.running then break end
-                        if part and part.Parent then
+                        if model and model.PrimaryPart then
                             if character and character.PrimaryPart then
-                                pcall(function() character:PivotTo(part.CFrame) end)
+                                pcall(function() character:PivotTo(model.PrimaryPart.CFrame) end)
                             end
-                            local pos = part.Position
+                            local pos = model.PrimaryPart.Position
                             local toDelete = {}
-                            pcall(function()
-                                for _, folder in ipairs(placed:GetChildren()) do
-                                    if folder:IsA("Folder") then
-                                        for _, v in ipairs(folder:GetDescendants()) do
-                                            if v:IsA("BasePart") and v.Parent and (v.Position - pos).Magnitude <= radius then
-                                                table.insert(toDelete, v)
-                                            end
-                                        end
-                                    end
+                            for _, other in ipairs(allModels) do
+                                if other.PrimaryPart and (other.PrimaryPart.Position - pos).Magnitude <= radius then
+                                    table.insert(toDelete, other)
                                 end
-                            end)
+                            end
                             for _, d in ipairs(toDelete) do
-                                task.spawn(function() destroyPart(d) end)
+                                task.spawn(function() destroyBlockModel(d) end)
                             end
                             task.wait(0.05)
                         end
@@ -594,15 +580,17 @@ OrbitTab:Toggle({
                         if character and character.PrimaryPart then
                             pcall(function() character:PivotTo(CFrame.new(myPos)) end)
                         end
-                        -- clear blocks within orbitClearDist
+                        -- clear block models within orbitClearDist
                         task.spawn(function()
-                            local placed = getDebrisPlacedFolder()
+                            local placed = getPlacedBlocksFolder()
                             if not placed then return end
-                            for _, folder in ipairs(placed:GetChildren()) do
-                                if folder:IsA("Folder") then
-                                    for _, v in ipairs(folder:GetDescendants()) do
-                                        if v:IsA("BasePart") and v.Parent and (v.Position - myPos).Magnitude <= orbitClearDist then
-                                            destroyPart(v)
+                            for _, userFolder in ipairs(placed:GetChildren()) do
+                                if userFolder:IsA("Folder") then
+                                    for _, blockModel in ipairs(userFolder:GetChildren()) do
+                                        if blockModel:IsA("Model") and blockModel.PrimaryPart then
+                                            if (blockModel.PrimaryPart.Position - myPos).Magnitude <= orbitClearDist then
+                                                destroyBlockModel(blockModel)
+                                            end
                                         end
                                     end
                                 end
@@ -612,13 +600,15 @@ OrbitTab:Toggle({
                     elseif character and character.PrimaryPart then
                         local pos = character.PrimaryPart.Position
                         task.spawn(function()
-                            local placed = getDebrisPlacedFolder()
+                            local placed = getPlacedBlocksFolder()
                             if not placed then return end
-                            for _, folder in ipairs(placed:GetChildren()) do
-                                if folder:IsA("Folder") then
-                                    for _, v in ipairs(folder:GetDescendants()) do
-                                        if v:IsA("BasePart") and v.Parent and (v.Position - pos).Magnitude <= orbitClearDist then
-                                            destroyPart(v)
+                            for _, userFolder in ipairs(placed:GetChildren()) do
+                                if userFolder:IsA("Folder") then
+                                    for _, blockModel in ipairs(userFolder:GetChildren()) do
+                                        if blockModel:IsA("Model") and blockModel.PrimaryPart then
+                                            if (blockModel.PrimaryPart.Position - pos).Magnitude <= orbitClearDist then
+                                                destroyBlockModel(blockModel)
+                                            end
                                         end
                                     end
                                 end
@@ -817,5 +807,5 @@ Window:Button({
     end,
 })
 
-WindUI:Notify({ Title = "Build Exploit Pack", Content = "Cage teleports, TNT spam ready, Debris cleared." })
-print("Build Exploit Pack – Debris paths + TNT spam loaded.")
+WindUI:Notify({ Title = "Build Exploit Pack", Content = "50 concurrent placements, Debris models, instant cage." })
+print("Build Exploit Pack – Final version with model-based destruction loaded.")
