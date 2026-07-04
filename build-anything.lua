@@ -473,7 +473,7 @@ end)
 
 -- Orbit parameters
 local orbitSpeed = 0.3
-local orbitClearDist = 30
+local orbitClearDist = 20
 local orbitRadius = 20
 local orbitMinHeight = 0
 local orbitMaxHeight = 0
@@ -529,12 +529,12 @@ OrbitTab:Toggle({
     end,
 })
 
-OrbitTab:Slider({ Title = "Speed", Step = 0.01, Value = { Min = 0.05, Max = 1, Default = 0.3 }, Callback = function(v) orbitSpeed = v end })
-OrbitTab:Slider({ Title = "Clear Dist", Step = 1, Value = { Min = 5, Max = 50, Default = 20 }, Callback = function(v) orbitClearDist = v end })
-OrbitTab:Slider({ Title = "Orbit Radius", Step = 1, Value = { Min = 5, Max = 50, Default = 20 }, Callback = function(v) orbitRadius = v end })
-OrbitTab:Slider({ Title = "Min Height", Step = 1, Value = { Min = -10, Max = 10, Default = -5 }, Callback = function(v) orbitMinHeight = v end })
-OrbitTab:Slider({ Title = "Max Height", Step = 1, Value = { Min = -10, Max = 20, Default = 10 }, Callback = function(v) orbitMaxHeight = v end })
-OrbitTab:Slider({ Title = "Y Offset", Step = 1, Value = { Min = -10, Max = 10, Default = 0 }, Callback = function(v) orbitYOffset = v end })
+OrbitTab:Slider({ Title = "Speed", Step = 0.01, Value = { Min = 0.05, Max = 1.5, Default = 0.3 }, Callback = function(v) orbitSpeed = v end })
+OrbitTab:Slider({ Title = "Clear Dist", Step = 1, Value = { Min = 5, Max = 25, Default = 20 }, Callback = function(v) orbitClearDist = v end })
+OrbitTab:Slider({ Title = "Orbit Radius", Step = 1, Value = { Min = 0, Max = 100, Default = 20 }, Callback = function(v) orbitRadius = v end })
+OrbitTab:Slider({ Title = "Min Height", Step = 1, Value = { Min = -10, Max = 10, Default = 0 }, Callback = function(v) orbitMinHeight = v end })
+OrbitTab:Slider({ Title = "Max Height", Step = 1, Value = { Min = -10, Max = 20, Default = 0 }, Callback = function(v) orbitMaxHeight = v end })
+OrbitTab:Slider({ Title = "Y Offset", Step = 1, Value = { Min = -10, Max = 10, Default = -6 }, Callback = function(v) orbitYOffset = v end })
 
 -- SPAMMER TAB (Fast Sphere Fill r=13)
 local SpammerTab = Window:Tab({ Title = "Spammer", Icon = "solar:layers-bold" })
