@@ -1,3 +1,5 @@
+-- Build Exploit Pack – WindUI Edition (Orbit Aura, Spammer Radius 13)
+-- Aura now has configurable Min/Max Height and Y Offset. Toggle renamed to Orbit.
 
 local WindUI = nil
 pcall(function()
