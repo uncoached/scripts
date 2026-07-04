@@ -1,4 +1,4 @@
--- Adapted Build Exploit Pack for similar game using provided remotes
+-- Adapted Build Exploit Pack: Spammer centered on target, cage follows without teleport.
 -- Remotes: ReplicatedStorage.Remotes.DestroyBlock (FireServer with Model)
 --          ReplicatedStorage.Remotes.PlaceBlock (InvokeServer with blockType, CFrame)
 
@@ -27,7 +27,7 @@ end
 if player.Character then onCharAdded(player.Character) end
 player.CharacterAdded:Connect(onCharAdded)
 
--- Remotes (adapted)
+-- Remotes
 local remotes = game:GetService("ReplicatedStorage"):WaitForChild("Remotes")
 local placeRemote = remotes:WaitForChild("PlaceBlock")   -- InvokeServer(blockType, CFrame)
 local destroyRemote = remotes:WaitForChild("DestroyBlock") -- FireServer(Model)
@@ -77,18 +77,19 @@ local function destroyPart(part)
     tempModel:Destroy()
 end
 
--- Cage a player
+-- Cage a player – no teleport, just place blocks around target
 local function cagePlayer(target)
     if not target or not target.Character or not target.Character.PrimaryPart then return end
     local root = target.Character.PrimaryPart
-    if character and character.PrimaryPart then
-        pcall(function() character:PivotTo(root.CFrame + Vector3.new(0,2,0)) end)
-    end
     local center = root.Position
-    for x = -2,2 do for y = -2,2 do for z = -2,2 do
-        if x==0 and y==0 and z==0 then continue end
-        placeBlock("Glass", center + Vector3.new(x*4, y*4, z*4))
-    end end end
+    for x = -2,2 do
+        for y = -2,2 do
+            for z = -2,2 do
+                if x==0 and y==0 and z==0 then continue end
+                placeBlock("Glass", center + Vector3.new(x*4, y*4, z*4))
+            end
+        end
+    end
 end
 
 -- Destroy all parts in folder
@@ -258,8 +259,8 @@ TargetActions:Toggle({
             startFeature("cageTarget", function(flag)
                 while flag.running do
                     if not selectedTarget then task.wait(1); continue end
-                    cagePlayer(selectedTarget)
-                    task.wait(0.5)
+                    cagePlayer(selectedTarget)  -- now no teleport, just places blocks
+                    task.wait(0.3)  -- faster interval
                 end
             end)
         else stopFeature("cageTarget") end
@@ -402,7 +403,7 @@ MainTab:Toggle({
                     for _, plr in ipairs(Players:GetPlayers()) do
                         if plr ~= player then
                             cagePlayer(plr)
-                            task.wait(0.5)
+                            task.wait(0.3)
                         end
                     end
                     task.wait(1)
@@ -537,35 +538,54 @@ OrbitTab:Slider({ Title = "Min Height", Step = 1, Value = { Min = -10, Max = 10,
 OrbitTab:Slider({ Title = "Max Height", Step = 1, Value = { Min = -10, Max = 20, Default = 10 }, Callback = function(v) orbitMaxHeight = v end })
 OrbitTab:Slider({ Title = "Y Offset", Step = 1, Value = { Min = -10, Max = 10, Default = 0 }, Callback = function(v) orbitYOffset = v end })
 
--- SPAMMER TAB (Radius 13)
+-- SPAMMER TAB (Radius 13) – now follows a selected target
 local SpammerTab = Window:Tab({ Title = "Spammer", Icon = "solar:layers-bold" })
+local spamTarget = nil
+local spamDropdown = SpammerTab:Section({ Title = "Spammer Target" }):Dropdown({
+    Title = "Select Target", Values = {}, AllowNone = true,
+    Callback = function(value)
+        if value then
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr.Name == value and plr ~= player then spamTarget = plr return end
+            end
+        else spamTarget = nil end
+    end,
+})
+refreshDropdown(spamDropdown)
+Players.PlayerAdded:Connect(function() refreshDropdown(spamDropdown) end)
+Players.PlayerRemoving:Connect(function(p)
+    if spamTarget == p then spamTarget = nil; spamDropdown:Select(nil) end
+    refreshDropdown(spamDropdown)
+end)
+
 local spamDelay = 0
+-- Precompute offsets for sphere radius 13
+local sphereOffsets = {}
+for x = -13,13 do
+    for y = -13,13 do
+        for z = -13,13 do
+            if math.sqrt(x*x + y*y + z*z) <= 13 then
+                table.insert(sphereOffsets, Vector3.new(x, y, z))
+            end
+        end
+    end
+end
+
 SpammerTab:Toggle({
     Title = "Sphere Fill (r=13)",
     Callback = function(state)
         if state then
             startFeature("spammer", function(flag)
-                local radius = 13
                 while flag.running do
-                    if character and character.PrimaryPart then
-                        local center = character.PrimaryPart.Position
-                        local positions = {}
-                        for x = -radius, radius do
-                            for y = -radius, radius do
-                                for z = -radius, radius do
-                                    local pos = Vector3.new(center.X+x, center.Y+y, center.Z+z)
-                                    if (pos - center).Magnitude <= radius then
-                                        table.insert(positions, pos)
-                                    end
-                                end
-                            end
-                        end
-                        for _, pos in ipairs(positions) do
+                    local target = spamTarget
+                    if target and target.Character and target.Character.PrimaryPart then
+                        local center = target.Character.PrimaryPart.Position
+                        for _, offset in ipairs(sphereOffsets) do
                             if not flag.running then return end
-                            placeBlock("Glass", pos)
+                            placeBlock("Glass", center + offset)
                             if spamDelay > 0 then task.wait(spamDelay) end
                         end
-                        task.wait()
+                        -- loop immediately to keep filling (sphere moves with target)
                     else
                         task.wait(0.5)
                     end
@@ -703,5 +723,5 @@ Window:Button({
     end,
 })
 
-WindUI:Notify({ Title = "Build Exploit Pack", Content = "Orbit aura & spammer ready! Adapted for new remotes." })
-print("Build Exploit Pack – Adapted script loaded.")
+WindUI:Notify({ Title = "Build Exploit Pack", Content = "Spammer follows target, cage no teleport." })
+print("Build Exploit Pack – Follow features loaded.")
