@@ -1,46 +1,35 @@
---[[
-    Advanced HvH Script for Roblox Rivals (WindUI)
-    Features: ESP (Box, Name, Health, Distance, Skeleton), Camera Aimbot, Silent Aim (Raycast), Triggerbot,
-              Controller Support (Right Stick Aim), Radar, Chams, Glow, Anti-Aim (Desync), Nightmode, Fullbright.
-    FOV circle is outline only.
-]]
+--// Advanced HvH Script for Roblox Rivals – WindUI (correct layout)
+--// Features: ESP (Box, Name, Health, Distance, Skeleton), Camera Aimbot, Silent Aim (Raycast), Triggerbot,
+--//           Controller Support (Right Stick Aim), Radar, Chams, Glow, Anti‑Aim, Nightmode, Fullbright.
+--//           FOV circle is outline only.
+--//
+--// Copy the remote name for Silent Aim – check with Dex Explorer.
+--// The script uses WindUI exactly as you requested.
 
---// Environment
-local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
+local WindUI = nil
+pcall(function()
+    if game:GetService("RunService"):IsStudio() then
+        WindUI = require(game:GetService("ReplicatedStorage"):WaitForChild("WindUI"):WaitForChild("Init"))
+    else
+        WindUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
+    end
+end)
+if not WindUI then return end
+
 local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 local Camera = Workspace.CurrentCamera
-local LocalPlayer = Players.LocalPlayer
 local Lighting = game:GetService("Lighting")
+local LocalPlayer = Players.LocalPlayer
 
---// Safe cloneref
-local cloneref = (cloneref or clonereference or function(instance) return instance end)
-
---// WindUI Initialization (exactly as provided)
-local WindUI
-do
-    local ok, result = pcall(function()
-        return require("./src/Init")
-    end)
-
-    if ok then
-        WindUI = result
-    else
-        if cloneref(game:GetService("RunService")):IsStudio() then
-            WindUI = require(cloneref(game:GetService("ReplicatedStorage"):WaitForChild("WindUI"):WaitForChild("Init")))
-        else
-            WindUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
-        end
-    end
-end
-
---// Settings
+--// ==================== SETTINGS ====================
 local Settings = {
     Aimbot = {
         Enabled = false,
-        Silent = true,
-        HitPart = "Head",
+        Silent = true,             -- Raycast silent aim
+        HitPart = "Head",          -- Head, UpperTorso, HumanoidRootPart
         FOV = 200,
         Smoothness = 0.1,
         VisibleCheck = true,
@@ -74,25 +63,25 @@ local Settings = {
     }
 }
 
---// Utility Functions
+--// ==================== UTILITY FUNCTIONS ====================
 local function getCharacter(player)
     return player.Character or player.CharacterAdded:Wait()
 end
-local function getHead(char) return char:FindFirstChild("Head") end
-local function getHRP(char) return char:FindFirstChild("HumanoidRootPart") end
-local function getHumanoid(char) return char:FindFirstChildWhichIsA("Humanoid") end
+local function getHead(char) return char and char:FindFirstChild("Head") end
+local function getHRP(char) return char and char:FindFirstChild("HumanoidRootPart") end
+local function getHumanoid(char) return char and char:FindFirstChildWhichIsA("Humanoid") end
 local function teamCheck(plr)
     return Settings.Aimbot.TeamCheck and plr.Team == LocalPlayer.Team
 end
 local function isVisible(targetPart)
     local origin = Camera.CFrame.Position
-    local direction = (targetPart.Position - origin).Unit * 1000
-    local ray = Ray.new(origin, direction)
-    local hit, _ = Workspace:FindPartOnRay(ray, LocalPlayer.Character, false, true)
+    local dir = (targetPart.Position - origin).Unit * 1000
+    local ray = Ray.new(origin, dir)
+    local hit = Workspace:FindPartOnRay(ray, LocalPlayer.Character, false, true)
     return hit and hit:IsDescendantOf(targetPart.Parent)
 end
 
---// Drawing Library (for ESP and FOV circle)
+--// ==================== DRAWING LIBRARY (for ESP & FOV) ====================
 local Drawing = nil
 pcall(function()
     Drawing = loadstring(game:HttpGet("https://raw.githubusercontent.com/Insei/PenisMan/refs/heads/main/DrawingLib.lua"))()
@@ -101,11 +90,10 @@ if not Drawing then
     pcall(function() Drawing = {}; Drawing.new = function() return {} end end)
 end
 
---// ESP Cache
+--// ==================== ESP CACHE & UPDATE ====================
 local ESPCache = {}
 local SilentAimTarget = nil
 
---// ESP Creation and Update
 local function createESP(player)
     local esp = {}
     if Drawing and Drawing.new then
@@ -264,7 +252,7 @@ local function updateESP()
     end
 end
 
---// Aimbot Target Acquisition
+--// ==================== AIMBOT TARGET ACQUISITION ====================
 local function getTarget()
     local closest = nil
     local closestDist = Settings.Aimbot.FOV
@@ -290,7 +278,7 @@ local function getTarget()
     return closest
 end
 
---// FOV Circle (Outline Only)
+--// ==================== FOV CIRCLE (OUTLINE ONLY) ====================
 local fovCircle = Drawing.new("Circle")
 fovCircle.Visible = false
 fovCircle.Color = Color3.new(1,0,0)
@@ -308,7 +296,7 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
---// Camera Aimbot (Non-Silent)
+--// ==================== CAMERA AIMBOT (NON‑SILENT) ====================
 RunService.RenderStepped:Connect(function()
     if Settings.Aimbot.Enabled and not Settings.Aimbot.Silent then
         local target = getTarget()
@@ -319,7 +307,6 @@ RunService.RenderStepped:Connect(function()
             Camera.CFrame = Camera.CFrame:Lerp(newCF, smooth)
         end
     end
-    -- Update silent aim target
     if Settings.Aimbot.Enabled and Settings.Aimbot.Silent then
         SilentAimTarget = getTarget()
     else
@@ -327,14 +314,15 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
---// Silent Aim Hook (Roblox Rivals – adjust remote name)
+--// ==================== SILENT AIM HOOK ====================
 local function hookSilentAim()
+    -- Replace with the actual remote name from Roblox Rivals (use Dex Explorer)
     for _, remote in pairs(getnilinstances()) do
         if remote:IsA("RemoteEvent") and (remote.Name == "FireBullet" or remote.Name == "Shoot" or remote.Name == "WeaponFire") then
             local old = hookfunction(remote.FireServer, function(self, ...)
                 local args = {...}
                 if SilentAimTarget and Settings.Aimbot.Enabled and Settings.Aimbot.Silent then
-                    -- Assume first argument is target position
+                    -- Assume first argument is the target position
                     args[1] = SilentAimTarget.Part.Position
                 end
                 return old(self, unpack(args))
@@ -345,7 +333,7 @@ local function hookSilentAim()
 end
 pcall(hookSilentAim)
 
---// Triggerbot
+--// ==================== TRIGGERBOT ====================
 spawn(function()
     while task.wait(Settings.Aimbot.TriggerDelay) do
         if Settings.Aimbot.Triggerbot and Settings.Aimbot.Enabled then
@@ -359,8 +347,8 @@ spawn(function()
     end
 end)
 
---// Controller Aim (Right Stick)
-UserInputService.InputChanged:Connect(function(input)
+--// ==================== CONTROLLER AIM (RIGHT STICK) ====================
+UIS.InputChanged:Connect(function(input)
     if Settings.Aimbot.UseController and (input.UserInputType == Enum.UserInputType.Gamepad1 or input.UserInputType == Enum.UserInputType.Gamepad2) then
         if input.KeyCode == Enum.KeyCode.Thumbstick2 then
             local delta = input.Delta
@@ -370,7 +358,7 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
---// Chams
+--// ==================== CHAMS ====================
 local chamHighlights = {}
 local function toggleChams(on)
     if on then
@@ -390,7 +378,7 @@ local function toggleChams(on)
     end
 end
 
---// Glow
+--// ==================== GLOW ====================
 local glowBillboards = {}
 local function toggleGlow(on)
     if on then
@@ -416,7 +404,7 @@ local function toggleGlow(on)
     end
 end
 
---// Radar
+--// ==================== RADAR ====================
 local radarGui = nil
 local function toggleRadar(on)
     if radarGui then radarGui:Destroy(); radarGui = nil end
@@ -436,30 +424,33 @@ local function toggleRadar(on)
     spawn(function()
         while radarGui and Settings.Misc.Radar do
             local localRoot = getHRP(LocalPlayer.Character)
-            for _, player in pairs(Players:GetPlayers()) do
-                if player == LocalPlayer then continue end
-                local char = player.Character
-                if not char then continue end
-                local root = getHRP(char)
-                if not root or not localRoot then continue end
-                local relative = localRoot.CFrame:PointToObjectSpace(root.Position)
-                local scale = Settings.Misc.RadarZoom
-                local half = Settings.Misc.RadarSize/2
-                local x = half + relative.X * scale
-                local y = half - relative.Z * scale
-                local dot = canvas:FindFirstChild(player.Name) or Instance.new("Frame", canvas)
-                dot.Name = player.Name
-                dot.Size = UDim2.new(0,5,0,5)
-                dot.Position = UDim2.new(0, x-2.5, 0, y-2.5)
-                dot.BackgroundColor3 = player.TeamColor.Color
-                dot.BorderSizePixel = 0
+            if localRoot then
+                for _, player in pairs(Players:GetPlayers()) do
+                    if player == LocalPlayer then continue end
+                    local char = player.Character
+                    if not char then continue end
+                    local root = getHRP(char)
+                    if root then
+                        local relative = localRoot.CFrame:PointToObjectSpace(root.Position)
+                        local scale = Settings.Misc.RadarZoom
+                        local half = Settings.Misc.RadarSize/2
+                        local x = half + relative.X * scale
+                        local y = half - relative.Z * scale
+                        local dot = canvas:FindFirstChild(player.Name) or Instance.new("Frame", canvas)
+                        dot.Name = player.Name
+                        dot.Size = UDim2.new(0,5,0,5)
+                        dot.Position = UDim2.new(0, x-2.5, 0, y-2.5)
+                        dot.BackgroundColor3 = player.TeamColor.Color
+                        dot.BorderSizePixel = 0
+                    end
+                end
             end
             RunService.Heartbeat:Wait()
         end
     end)
 end
 
---// Anti-Aim (Desync)
+--// ==================== ANTI‑AIM (DESYNC) ====================
 spawn(function()
     while task.wait() do
         if Settings.Misc.AntiAim and LocalPlayer.Character then
@@ -474,7 +465,7 @@ spawn(function()
     end
 end)
 
---// Auto Crouch
+--// ==================== AUTO CROUCH ====================
 spawn(function()
     while task.wait() do
         if Settings.Misc.AutoCrouch and LocalPlayer.Character then
@@ -486,7 +477,7 @@ spawn(function()
     end
 end)
 
---// ESP Render Loop
+--// ==================== ESP RENDER LOOP ====================
 RunService.RenderStepped:Connect(function()
     if Settings.Visuals.ESP.Enabled then
         updateESP()
@@ -495,69 +486,87 @@ end)
 
 --// ==================== WINDUI INTERFACE ====================
 local Window = WindUI:CreateWindow({
-    Title = "Rivals HvH | v2.0",
+    Title = "Rivals HvH | v3.0",
     Folder = "rivals_hvh",
     Icon = "solar:target-bold",
     Theme = "Dark",
-    NewElements = true,
-    HideSearchBar = false,
     OpenButton = {
         Title = "Open HvH",
         Enabled = true,
-        Draggable = true,
         Scale = 0.5,
-    },
-    Topbar = {
-        Height = 44,
-        ButtonsType = "Mac",
     },
 })
 
--- Tabs
-local AimTab = Window:Tab({ Title = "Aimbot", Icon = "solar:target-bold", IconColor = Color3.fromRGB(255,0,0), Border = true })
-local ESPTab = Window:Tab({ Title = "ESP", Icon = "solar:eye-bold", IconColor = Color3.fromRGB(0,255,0), Border = true })
-local VisTab = Window:Tab({ Title = "Visuals", Icon = "solar:palette-bold", IconColor = Color3.fromRGB(0,150,255), Border = true })
-local MiscTab = Window:Tab({ Title = "Misc", Icon = "solar:settings-bold", IconColor = Color3.fromRGB(200,200,200), Border = true })
+-- Aimbot Tab
+local AimTab = Window:Tab({ Title = "Aimbot", Icon = "solar:target-bold" })
 
---// Aimbot UI
-AimTab:Toggle({ Title = "Enable Aimbot", Value = false, Callback = function(v) Settings.Aimbot.Enabled = v end })
-AimTab:Toggle({ Title = "Silent Aim (Raycast)", Value = true, Callback = function(v) Settings.Aimbot.Silent = v end })
-AimTab:Toggle({ Title = "Triggerbot", Value = false, Callback = function(v) Settings.Aimbot.Triggerbot = v end })
-AimTab:Toggle({ Title = "Visibility Check", Value = true, Callback = function(v) Settings.Aimbot.VisibleCheck = v end })
-AimTab:Toggle({ Title = "Team Check", Value = true, Callback = function(v) Settings.Aimbot.TeamCheck = v end })
-AimTab:Toggle({ Title = "Use Controller (Right Stick)", Value = false, Callback = function(v) Settings.Aimbot.UseController = v end })
+AimTab:Section({ Title = "Main Settings" })
+    :Toggle({ Title = "Enable Aimbot", Value = false, Callback = function(v) Settings.Aimbot.Enabled = v end })
+    :Toggle({ Title = "Silent Aim (Raycast)", Value = true, Callback = function(v) Settings.Aimbot.Silent = v end })
+    :Toggle({ Title = "Triggerbot", Value = false, Callback = function(v) Settings.Aimbot.Triggerbot = v end })
+    :Toggle({ Title = "Visibility Check", Value = true, Callback = function(v) Settings.Aimbot.VisibleCheck = v end })
+    :Toggle({ Title = "Team Check", Value = true, Callback = function(v) Settings.Aimbot.TeamCheck = v end })
+    :Toggle({ Title = "Use Controller (Right Stick)", Value = false, Callback = function(v) Settings.Aimbot.UseController = v end })
 
-AimTab:Slider({ Title = "FOV", Step = 10, Value = { Min = 10, Max = 500, Default = 200 }, Callback = function(v) Settings.Aimbot.FOV = v end })
-AimTab:Slider({ Title = "Smoothness", Step = 0.01, Value = { Min = 0.01, Max = 1, Default = 0.1 }, Callback = function(v) Settings.Aimbot.Smoothness = v end })
-AimTab:Slider({ Title = "Controller Sensitivity", Step = 0.1, Value = { Min = 0.1, Max = 2, Default = 0.5 }, Callback = function(v) Settings.Aimbot.ControllerSensitivity = v end })
-AimTab:Slider({ Title = "Trigger Delay", Step = 0.05, Value = { Min = 0.05, Max = 1, Default = 0.1 }, Callback = function(v) Settings.Aimbot.TriggerDelay = v end })
+AimTab:Section({ Title = "Aim Parameters" })
+    :Slider({ Title = "FOV", Step = 10, Value = { Min = 10, Max = 500, Default = 200 }, Callback = function(v) Settings.Aimbot.FOV = v end })
+    :Slider({ Title = "Smoothness", Step = 0.01, Value = { Min = 0.01, Max = 1, Default = 0.1 }, Callback = function(v) Settings.Aimbot.Smoothness = v end })
+    :Slider({ Title = "Controller Sensitivity", Step = 0.1, Value = { Min = 0.1, Max = 2, Default = 0.5 }, Callback = function(v) Settings.Aimbot.ControllerSensitivity = v end })
+    :Slider({ Title = "Trigger Delay", Step = 0.05, Value = { Min = 0.05, Max = 1, Default = 0.1 }, Callback = function(v) Settings.Aimbot.TriggerDelay = v end })
+    :Dropdown({ Title = "Hit Part", Values = { "Head", "UpperTorso", "HumanoidRootPart" }, Value = "Head", Callback = function(v) Settings.Aimbot.HitPart = v end })
 
-AimTab:Dropdown({ Title = "Hit Part", Values = { "Head", "UpperTorso", "HumanoidRootPart" }, Value = "Head", Callback = function(v) Settings.Aimbot.HitPart = v end })
+-- ESP Tab
+local ESPTab = Window:Tab({ Title = "ESP", Icon = "solar:eye-bold" })
 
---// ESP UI
-ESPTab:Toggle({ Title = "Enable ESP", Value = true, Callback = function(v) Settings.Visuals.ESP.Enabled = v end })
-ESPTab:Toggle({ Title = "Box", Value = true, Callback = function(v) Settings.Visuals.ESP.Box = v end })
-ESPTab:Toggle({ Title = "Name", Value = true, Callback = function(v) Settings.Visuals.ESP.Name = v end })
-ESPTab:Toggle({ Title = "Health Bar", Value = true, Callback = function(v) Settings.Visuals.ESP.HealthBar = v end })
-ESPTab:Toggle({ Title = "Distance", Value = true, Callback = function(v) Settings.Visuals.ESP.Distance = v end })
-ESPTab:Toggle({ Title = "Skeleton", Value = false, Callback = function(v) Settings.Visuals.ESP.Skeleton = v end })
+ESPTab:Section({ Title = "ESP Toggles" })
+    :Toggle({ Title = "Enable ESP", Value = true, Callback = function(v) Settings.Visuals.ESP.Enabled = v end })
+    :Toggle({ Title = "Box", Value = true, Callback = function(v) Settings.Visuals.ESP.Box = v end })
+    :Toggle({ Title = "Name", Value = true, Callback = function(v) Settings.Visuals.ESP.Name = v end })
+    :Toggle({ Title = "Health Bar", Value = true, Callback = function(v) Settings.Visuals.ESP.HealthBar = v end })
+    :Toggle({ Title = "Distance", Value = true, Callback = function(v) Settings.Visuals.ESP.Distance = v end })
+    :Toggle({ Title = "Skeleton", Value = false, Callback = function(v) Settings.Visuals.ESP.Skeleton = v end })
 
---// Visuals UI
-VisTab:Toggle({ Title = "Chams", Value = false, Callback = toggleChams })
-VisTab:Toggle({ Title = "Glow", Value = false, Callback = toggleGlow })
-VisTab:Toggle({ Title = "Night Mode", Value = false, Callback = function(v) Settings.Visuals.NightMode = v; Lighting.ClockTime = v and 0 or 14; Lighting.Brightness = v and 0.5 or 2 end })
-VisTab:Toggle({ Title = "Fullbright", Value = false, Callback = function(v) Settings.Visuals.Fullbright = v; Lighting.Ambient = v and Color3.new(1,1,1) or Color3.new(0,0,0) end })
+-- Visuals Tab
+local VisTab = Window:Tab({ Title = "Visuals", Icon = "solar:palette-bold" })
 
---// Misc UI
-MiscTab:Toggle({ Title = "Radar", Value = true, Callback = toggleRadar })
-MiscTab:Slider({ Title = "Radar Size", Step = 10, Value = { Min = 100, Max = 400, Default = 200 }, Callback = function(v) Settings.Misc.RadarSize = v; toggleRadar(Settings.Misc.Radar) end })
-MiscTab:Slider({ Title = "Radar Zoom", Step = 0.1, Value = { Min = 0.5, Max = 5, Default = 1 }, Callback = function(v) Settings.Misc.RadarZoom = v end })
-MiscTab:Toggle({ Title = "Anti-Aim (Desync)", Value = false, Callback = function(v) Settings.Misc.AntiAim = v end })
-MiscTab:Slider({ Title = "Desync Angle", Step = 5, Value = { Min = 0, Max = 90, Default = 45 }, Callback = function(v) Settings.Misc.DesyncAngle = v end })
-MiscTab:Toggle({ Title = "Auto Crouch", Value = false, Callback = function(v) Settings.Misc.AutoCrouch = v end })
+VisTab:Section({ Title = "World Visuals" })
+    :Toggle({ Title = "Chams", Value = false, Callback = toggleChams })
+    :Toggle({ Title = "Glow", Value = false, Callback = toggleGlow })
+    :Toggle({ Title = "Night Mode", Value = false, Callback = function(v) Settings.Visuals.NightMode = v; Lighting.ClockTime = v and 0 or 14; Lighting.Brightness = v and 0.5 or 2 end })
+    :Toggle({ Title = "Fullbright", Value = false, Callback = function(v) Settings.Visuals.Fullbright = v; Lighting.Ambient = v and Color3.new(1,1,1) or Color3.new(0,0,0) end })
 
---// Start Radar on load
+-- Misc Tab
+local MiscTab = Window:Tab({ Title = "Misc", Icon = "solar:settings-bold" })
+
+MiscTab:Section({ Title = "Radar" })
+    :Toggle({ Title = "Radar", Value = true, Callback = toggleRadar })
+    :Slider({ Title = "Radar Size", Step = 10, Value = { Min = 100, Max = 400, Default = 200 }, Callback = function(v) Settings.Misc.RadarSize = v; toggleRadar(Settings.Misc.Radar) end })
+    :Slider({ Title = "Radar Zoom", Step = 0.1, Value = { Min = 0.5, Max = 5, Default = 1 }, Callback = function(v) Settings.Misc.RadarZoom = v end })
+
+MiscTab:Section({ Title = "Other" })
+    :Toggle({ Title = "Anti‑Aim (Desync)", Value = false, Callback = function(v) Settings.Misc.AntiAim = v end })
+    :Slider({ Title = "Desync Angle", Step = 5, Value = { Min = 0, Max = 90, Default = 45 }, Callback = function(v) Settings.Misc.DesyncAngle = v end })
+    :Toggle({ Title = "Auto Crouch", Value = false, Callback = function(v) Settings.Misc.AutoCrouch = v end })
+
+-- Stop all features button (optional, stops loops not toggles)
+Window:Button({
+    Title = "STOP ALL",
+    Color = Color3.fromRGB(255,0,0),
+    Callback = function()
+        -- Reset toggles
+        Settings.Aimbot.Enabled = false
+        Settings.Aimbot.Triggerbot = false
+        Settings.Visuals.Chams = false; toggleChams(false)
+        Settings.Visuals.Glow = false; toggleGlow(false)
+        Settings.Misc.Radar = false; toggleRadar(false)
+        Settings.Misc.AntiAim = false
+        Settings.Misc.AutoCrouch = false
+        WindUI:Notify({ Title = "Stopped", Content = "All features disabled." })
+    end,
+})
+
+-- Start radar on load
 pcall(function() toggleRadar(true) end)
 
---// Notify
-WindUI:Notify({ Title = "Rivals HvH", Content = "Loaded! Use /dex to find weapon remote for Silent Aim." })
+WindUI:Notify({ Title = "Rivals HvH", Content = "Loaded! Silent Aim remote may need adjustment." })
+print("// Roblox Rivals HvH – WindUI version ready.")
