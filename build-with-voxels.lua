@@ -1,16 +1,26 @@
--- Build Exploit Pack – Adapted for new game (workspace blocks, UUID place, BlockType attribute)
--- Place: ReplicatedStorage.PlaceBlockEvent:FireServer(pos, blockType, rotation, uuid, "Block")
--- Destroy: ReplicatedStorage.DestroyBlockEvent:FireServer(part)
+-- Build Exploit Pack – Adapted for game using PlaceBlockEvent & DestroyBlockEven
+-- Place: PlaceBlockEvent:FireServer(pos, blockType, rotation, uuid, "Block")
+-- Destroy: DestroyBlockEven:FireServer(tempPart, uuid)
 
 local WindUI = nil
-pcall(function()
+local loadSuccess, loadErr = pcall(function()
     if game:GetService("RunService"):IsStudio() then
         WindUI = require(game:GetService("ReplicatedStorage"):WaitForChild("WindUI"):WaitForChild("Init"))
     else
         WindUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
     end
 end)
-if not WindUI then return end
+if not WindUI then
+    warn("WindUI failed to load: ", loadErr or "unknown error")
+    pcall(function()
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "Error",
+            Text = "WindUI not loaded: " .. tostring(loadErr),
+            Duration = 5
+        })
+    end)
+    return
+end
 
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
@@ -28,10 +38,10 @@ end
 if player.Character then onCharAdded(player.Character) end
 player.CharacterAdded:Connect(onCharAdded)
 
--- Remotes (inferring DestroyBlockEvent exists)
+-- Remotes
 local replicatedStorage = game:GetService("ReplicatedStorage")
 local placeEvent = replicatedStorage:WaitForChild("PlaceBlockEvent")
-local destroyEvent = replicatedStorage:WaitForChild("DestroyBlockEvent") -- assumed, adjust if needed
+local destroyEvent = replicatedStorage:WaitForChild("DestroyBlockEven")  -- note exact name
 
 -- Fling globals
 getgenv().OldPos = nil
@@ -90,24 +100,35 @@ end
 
 -- Place block helper
 local function placeBlock(blockType, pos)
-    placeBlockThrottled(blockType, pos, 0) -- rotation 0
+    placeBlockThrottled(blockType, pos, 0)
 end
 
--- Destroy a block part
+-- Destroy a placed block part using DestroyBlockEven
 local function destroyBlockPart(part)
     if not part or not part.Parent then return end
+    -- Attempt to retrieve UUID from attribute or name
+    local uuid = part:GetAttribute("UUID")
+    if not uuid or uuid == "" then
+        uuid = part.Name  -- fallback: many blocks have their name set to the UUID
+    end
+    if not uuid or uuid == "" then return end
+
+    -- Create a temporary part (required by the remote)
+    local tempPart = Instance.new("Part")
+    tempPart.Parent = nil
     pcall(function()
-        destroyEvent:FireServer(part)
+        destroyEvent:FireServer(tempPart, uuid)
     end)
+    tempPart:Destroy()
 end
 
--- Collect all placed blocks (parts with BlockType attribute, not in characters)
+-- Collect all placed blocks (parts with BlockType attribute, excluding characters)
 local function getAllPlacedBlocks()
     local blocks = {}
     for _, part in ipairs(workspace:GetDescendants()) do
         if part:IsA("BasePart") and part:GetAttribute("BlockType") ~= nil then
-            -- Exclude parts inside player characters (optional, but good for safety)
-            if not part:FindFirstAncestorOfClass("Model") or not Players:GetPlayerFromCharacter(part:FindFirstAncestorOfClass("Model")) then
+            local model = part:FindFirstAncestorOfClass("Model")
+            if not model or not Players:GetPlayerFromCharacter(model) then
                 table.insert(blocks, part)
             end
         end
@@ -345,15 +366,12 @@ TargetActions:Toggle({
                     if not selectedTarget then task.wait(0.5); continue end
                     local allBlocks = getAllPlacedBlocks()
                     if #allBlocks == 0 then task.wait(0.5); continue end
-                    -- Find a block near the target to teleport to
                     local targetRoot = selectedTarget.Character and selectedTarget.Character.PrimaryPart
                     if not targetRoot then task.wait(0.5); continue end
                     local targetPos = targetRoot.Position
                     local closest = nil
-                    local closestDist = radius
                     for _, part in ipairs(allBlocks) do
-                        local dist = (part.Position - targetPos).Magnitude
-                        if dist <= radius then
+                        if (part.Position - targetPos).Magnitude <= radius then
                             closest = part
                             break
                         end
@@ -764,5 +782,5 @@ Window:Button({
     end,
 })
 
-WindUI:Notify({ Title = "Build Exploit Pack", Content = "Adapted for UUID-based blocks. DestroyBlockEvent assumed." })
-print("Build Exploit Pack – New game version loaded.")
+WindUI:Notify({ Title = "Build Exploit Pack", Content = "Loaded with DestroyBlockEven remote." })
+print("Build Exploit Pack – DestroyBlockEven version loaded.")
