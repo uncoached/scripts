@@ -1,4 +1,4 @@
--- Adapted Build Exploit Pack – Instant cage, batch spammer/orbit still throttled
+-- Adapted Build Exploit Pack – Cage teleports, blocks destroyed from Debris, TNT spam added
 -- Remotes: ReplicatedStorage.Remotes.DestroyBlock (FireServer with Model)
 --          ReplicatedStorage.Remotes.PlaceBlock (InvokeServer with blockType, CFrame)
 
@@ -32,8 +32,11 @@ local remotes = game:GetService("ReplicatedStorage"):WaitForChild("Remotes")
 local placeRemote = remotes:WaitForChild("PlaceBlock")   -- InvokeServer(blockType, CFrame)
 local destroyRemote = remotes:WaitForChild("DestroyBlock") -- FireServer(Model)
 
-local builtFolder = workspace:FindFirstChild("Built") or Instance.new("Folder", workspace)
-builtFolder.Name = "Built"
+-- Placed blocks location
+local function getDebrisPlacedFolder()
+    local debris = workspace:FindFirstChild("Debris")
+    return debris and debris:FindFirstChild("PlacedBlocks")
+end
 
 -- Fling globals
 getgenv().OldPos = nil
@@ -89,7 +92,7 @@ local function waitForAllPlacements()
     repeat task.wait() until #placeQueue == 0 and placeActive == 0
 end
 
--- Place block helper – for non-cage use (still throttled)
+-- Place block helper – for throttled placing (non-cage)
 local function placeBlock(blockType, pos)
     local roundedPos = Vector3.new(math.round(pos.X), math.round(pos.Y), math.round(pos.Z))
     local cf = CFrame.new(roundedPos.X, roundedPos.Y, roundedPos.Z, 0, 0, 1, 0, 1, 0, -1, 0, 0)
@@ -107,13 +110,16 @@ local function destroyPart(part)
     tempModel:Destroy()
 end
 
--- ==================== INSTANT CAGE (bypasses throttler) ====================
+-- ==================== INSTANT CAGE (teleports local player, spawns all blocks at once) ====================
 local function cagePlayer(target)
     if not target or not target.Character or not target.Character.PrimaryPart then return end
     local root = target.Character.PrimaryPart
+    -- Teleport local player above target
+    if character and character.PrimaryPart then
+        pcall(function() character:PivotTo(root.CFrame + Vector3.new(0,2,0)) end)
+    end
     local center = root.Position
     local blockType = "Glass"
-    -- Directly invoke remote for each block, spawn all at once (124 blocks, acceptable)
     for x = -2,2 do
         for y = -2,2 do
             for z = -2,2 do
@@ -131,13 +137,26 @@ local function cagePlayer(target)
     end
 end
 
--- Destroy all parts in folder
-local function destroyAllParts(folder)
-    for _, v in ipairs(folder:GetDescendants()) do
-        if v:IsA("BasePart") then
-            task.spawn(function() destroyPart(v) end)
+-- Destroy all placed blocks across all players in Debris
+local function destroyAllPlacedBlocks()
+    local placed = getDebrisPlacedFolder()
+    if not placed then return end
+    for _, playerFolder in ipairs(placed:GetChildren()) do
+        if playerFolder:IsA("Folder") then
+            for _, v in ipairs(playerFolder:GetDescendants()) do
+                if v:IsA("BasePart") then
+                    task.spawn(function() destroyPart(v) end)
+                end
+            end
         end
     end
+end
+
+-- Get target player's placed folder in Debris
+local function getTargetPlacedFolder(targetPlayer)
+    local placed = getDebrisPlacedFolder()
+    if not placed then return nil end
+    return placed:FindFirstChild(targetPlayer.Name)
 end
 
 -- Fling function (unchanged)
@@ -298,11 +317,42 @@ TargetActions:Toggle({
             startFeature("cageTarget", function(flag)
                 while flag.running do
                     if not selectedTarget then task.wait(1); continue end
-                    cagePlayer(selectedTarget)  -- instant, no teleport, follows
-                    task.wait(0.05)  -- rapid follow
+                    cagePlayer(selectedTarget)  -- teleports + instant blocks
+                    task.wait(0.01)  -- extremely rapid follow
                 end
             end)
         else stopFeature("cageTarget") end
+    end,
+})
+
+TargetActions:Toggle({
+    Title = "TNT Spam",
+    Callback = function(state)
+        if state then
+            startFeature("tntSpam", function(flag)
+                while flag.running do
+                    if not selectedTarget or not selectedTarget.Character or not selectedTarget.Character.PrimaryPart then
+                        task.wait(0.5); continue
+                    end
+                    local root = selectedTarget.Character.PrimaryPart
+                    -- teleport above target
+                    if character and character.PrimaryPart then
+                        pcall(function() character:PivotTo(root.CFrame + Vector3.new(0,2,0)) end)
+                    end
+                    local center = root.Position
+                    -- spam TNT blocks in a 5x5x5 cube
+                    for x = -2,2 do
+                        for y = -2,2 do
+                            for z = -2,2 do
+                                if x==0 and y==0 and z==0 then continue end
+                                placeBlock("TNT", center + Vector3.new(x*4, y*4, z*4))
+                            end
+                        end
+                    end
+                    task.wait(0.05)
+                end
+            end)
+        else stopFeature("tntSpam") end
     end,
 })
 
@@ -314,7 +364,7 @@ TargetActions:Toggle({
                 local radius = 20
                 while flag.running do
                     if not selectedTarget then task.wait(0.5); continue end
-                    local folder = builtFolder:FindFirstChild(selectedTarget.Name)
+                    local folder = getTargetPlacedFolder(selectedTarget)
                     if not folder then task.wait(0.5); continue end
                     local parts = {}
                     pcall(function()
@@ -368,8 +418,8 @@ MainTab:Section({ Title = "Destroy All" }):Button({
     Title = "🗑️ DESTROY ALL",
     Color = Color3.fromRGB(220,20,20),
     Callback = function()
-        destroyAllParts(builtFolder)
-        WindUI:Notify({ Title = "Done", Content = "All parts destroyed." })
+        destroyAllPlacedBlocks()
+        WindUI:Notify({ Title = "Done", Content = "All placed blocks destroyed." })
     end,
 })
 
@@ -406,7 +456,6 @@ MainTab:Button({
     end,
 })
 
--- Fling All
 MainTab:Toggle({
     Title = "Fling All",
     Callback = function(state)
@@ -426,7 +475,6 @@ MainTab:Toggle({
     end,
 })
 
--- Cage All – uses instant cage for each player
 MainTab:Toggle({
     Title = "Cage All",
     Callback = function(state)
@@ -435,18 +483,17 @@ MainTab:Toggle({
                 while flag.running do
                     for _, plr in ipairs(Players:GetPlayers()) do
                         if plr ~= player then
-                            cagePlayer(plr)  -- instant
-                            task.wait(0.05)
+                            cagePlayer(plr)
+                            task.wait(0.01)
                         end
                     end
-                    task.wait(0.5)
+                    task.wait(0.3)
                 end
             end)
         else stopFeature("cageAll") end
     end,
 })
 
--- Nuke All
 MainTab:Toggle({
     Title = "Nuke All",
     Callback = function(state)
@@ -454,10 +501,16 @@ MainTab:Toggle({
             startFeature("nukeAll", function(flag)
                 local radius = 20
                 while flag.running do
+                    local placed = getDebrisPlacedFolder()
+                    if not placed then task.wait(0.5); continue end
                     local parts = {}
                     pcall(function()
-                        for _, v in ipairs(builtFolder:GetDescendants()) do
-                            if v:IsA("BasePart") and v.Parent then table.insert(parts, v) end
+                        for _, folder in ipairs(placed:GetChildren()) do
+                            if folder:IsA("Folder") then
+                                for _, v in ipairs(folder:GetDescendants()) do
+                                    if v:IsA("BasePart") and v.Parent then table.insert(parts, v) end
+                                end
+                            end
                         end
                     end)
                     for _, part in ipairs(parts) do
@@ -469,9 +522,13 @@ MainTab:Toggle({
                             local pos = part.Position
                             local toDelete = {}
                             pcall(function()
-                                for _, v in ipairs(builtFolder:GetDescendants()) do
-                                    if v:IsA("BasePart") and v.Parent and (v.Position - pos).Magnitude <= radius then
-                                        table.insert(toDelete, v)
+                                for _, folder in ipairs(placed:GetChildren()) do
+                                    if folder:IsA("Folder") then
+                                        for _, v in ipairs(folder:GetDescendants()) do
+                                            if v:IsA("BasePart") and v.Parent and (v.Position - pos).Magnitude <= radius then
+                                                table.insert(toDelete, v)
+                                            end
+                                        end
                                     end
                                 end
                             end)
@@ -537,10 +594,17 @@ OrbitTab:Toggle({
                         if character and character.PrimaryPart then
                             pcall(function() character:PivotTo(CFrame.new(myPos)) end)
                         end
+                        -- clear blocks within orbitClearDist
                         task.spawn(function()
-                            for _, v in ipairs(builtFolder:GetDescendants()) do
-                                if v:IsA("BasePart") and v.Parent and (v.Position - myPos).Magnitude <= orbitClearDist then
-                                    destroyPart(v)
+                            local placed = getDebrisPlacedFolder()
+                            if not placed then return end
+                            for _, folder in ipairs(placed:GetChildren()) do
+                                if folder:IsA("Folder") then
+                                    for _, v in ipairs(folder:GetDescendants()) do
+                                        if v:IsA("BasePart") and v.Parent and (v.Position - myPos).Magnitude <= orbitClearDist then
+                                            destroyPart(v)
+                                        end
+                                    end
                                 end
                             end
                         end)
@@ -548,9 +612,15 @@ OrbitTab:Toggle({
                     elseif character and character.PrimaryPart then
                         local pos = character.PrimaryPart.Position
                         task.spawn(function()
-                            for _, v in ipairs(builtFolder:GetDescendants()) do
-                                if v:IsA("BasePart") and v.Parent and (v.Position - pos).Magnitude <= orbitClearDist then
-                                    destroyPart(v)
+                            local placed = getDebrisPlacedFolder()
+                            if not placed then return end
+                            for _, folder in ipairs(placed:GetChildren()) do
+                                if folder:IsA("Folder") then
+                                    for _, v in ipairs(folder:GetDescendants()) do
+                                        if v:IsA("BasePart") and v.Parent and (v.Position - pos).Magnitude <= orbitClearDist then
+                                            destroyPart(v)
+                                        end
+                                    end
                                 end
                             end
                         end)
@@ -614,7 +684,7 @@ SpammerTab:Toggle({
                         local center = target.Character.PrimaryPart.Position
                         for _, offset in ipairs(sphereOffsets) do
                             if not flag.running then return end
-                            placeBlock("Glass", center + offset)  -- uses throttler, max 30 concurrent
+                            placeBlock("Glass", center + offset)
                         end
                     else
                         task.wait(0.5)
@@ -747,5 +817,5 @@ Window:Button({
     end,
 })
 
-WindUI:Notify({ Title = "Build Exploit Pack", Content = "Instant cage active, spammer throttled 30." })
-print("Build Exploit Pack – Instant cage + batch spammer loaded.")
+WindUI:Notify({ Title = "Build Exploit Pack", Content = "Cage teleports, TNT spam ready, Debris cleared." })
+print("Build Exploit Pack – Debris paths + TNT spam loaded.")
