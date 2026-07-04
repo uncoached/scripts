@@ -473,11 +473,11 @@ end)
 
 -- Orbit parameters
 local orbitSpeed = 0.3
-local orbitClearDist = 20
+local orbitClearDist = 30
 local orbitRadius = 20
-local orbitMinHeight = -5
-local orbitMaxHeight = 10
-local orbitYOffset = 0
+local orbitMinHeight = 0
+local orbitMaxHeight = 0
+local orbitYOffset = -6
 local orbitAngle = 0
 
 OrbitTab:Toggle({
