@@ -1,572 +1,434 @@
---// Advanced HvH Script for Roblox Rivals – WindUI (correct layout)
---// Features: ESP (Box, Name, Health, Distance, Skeleton), Camera Aimbot, Silent Aim (Raycast), Triggerbot,
---//           Controller Support (Right Stick Aim), Radar, Chams, Glow, Anti‑Aim, Nightmode, Fullbright.
---//           FOV circle is outline only.
---//
---// Copy the remote name for Silent Aim – check with Dex Explorer.
---// The script uses WindUI exactly as you requested.
+--// Roblox Rivals HvH Script (Rayfield UI)
+--// Features: Aimbot (camera + silent raycast), FOV circle (outline), Triggerbot, Hitbox expander, Bunnyhop, ESP (Box/Name/Health/Distance), Anti-Flash, Anti-Smoke, Controller aim assist.
+--// Silent aim works by hooking the weapon's FireServer remote – if the game's remote name differs, change line ~130.
+--// Controller aim moves mouse relative when right stick is used (only if `Use Controller` is enabled).
+--// Ensure your executor supports Drawing, hookfunction, getnilinstances, mousemoverel, etc.
 
-local WindUI = nil
-pcall(function()
-    if game:GetService("RunService"):IsStudio() then
-        WindUI = require(game:GetService("ReplicatedStorage"):WaitForChild("WindUI"):WaitForChild("Init"))
-    else
-        WindUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
-    end
-end)
-if not WindUI then return end
+-- Load Rayfield UI library
+local Rayfield = loadstring(game:HttpGet("https://raw.githubusercontent.com/twistedk1d/BloxStrike/refs/heads/main/Source/UI/source.lua"))()
 
-local Players = game:GetService("Players")
-local UIS = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
-local Workspace = game:GetService("Workspace")
-local Camera = Workspace.CurrentCamera
-local Lighting = game:GetService("Lighting")
-local LocalPlayer = Players.LocalPlayer
-
---// ==================== SETTINGS ====================
-local Settings = {
-    Aimbot = {
-        Enabled = false,
-        Silent = true,             -- Raycast silent aim
-        HitPart = "Head",          -- Head, UpperTorso, HumanoidRootPart
-        FOV = 200,
-        Smoothness = 0.1,
-        VisibleCheck = true,
-        TeamCheck = true,
-        Triggerbot = false,
-        TriggerDelay = 0.1,
-        UseController = false,
-        ControllerSensitivity = 0.5,
-    },
-    Visuals = {
-        ESP = {
-            Enabled = true,
-            Box = true,
-            Name = true,
-            HealthBar = true,
-            Distance = true,
-            Skeleton = false,
-        },
-        Chams = false,
-        Glow = false,
-        NightMode = false,
-        Fullbright = false,
-    },
-    Misc = {
-        Radar = true,
-        RadarSize = 200,
-        RadarZoom = 1,
-        AntiAim = false,
-        DesyncAngle = 45,
-        AutoCrouch = false,
+-- Window
+local Window = Rayfield:CreateWindow({
+    Name = "Rivals HvH | Premium",
+    Icon = 0,
+    LoadingTitle = "Loading HvH...",
+    LoadingSubtitle = "by Sparky9971",
+    Theme = "Amethyst",
+    ToggleUIKeybind = Enum.KeyCode.RightShift,
+    DisableRayfieldPrompts = false,
+    DisableBuildWarnings = false,
+    ConfigurationSaving = {
+        Enabled = true,
+        FolderName = "RivalsHvH",
+        FileName = "Config"
     }
-}
+})
 
---// ==================== UTILITY FUNCTIONS ====================
-local function getCharacter(player)
-    return player.Character or player.CharacterAdded:Wait()
+-- Services & Globals
+local RS = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local UserInputService = game:GetService("UserInputService")
+local Camera = Workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+local Lighting = game:GetService("Lighting")
+local CharactersFolder = Workspace:WaitForChild("Characters", 10)
+
+-- Character / team helpers
+local function getTFolder() return CharactersFolder:FindFirstChild("Terrorists") end
+local function getCTFolder() return CharactersFolder:FindFirstChild("Counter-Terrorists") end
+local function isAlive()
+    local t, ct = getTFolder(), getCTFolder()
+    return (t and t:FindFirstChild(LocalPlayer.Name)) or (ct and ct:FindFirstChild(LocalPlayer.Name))
 end
-local function getHead(char) return char and char:FindFirstChild("Head") end
-local function getHRP(char) return char and char:FindFirstChild("HumanoidRootPart") end
-local function getHumanoid(char) return char and char:FindFirstChildWhichIsA("Humanoid") end
-local function teamCheck(plr)
-    return Settings.Aimbot.TeamCheck and plr.Team == LocalPlayer.Team
-end
-local function isVisible(targetPart)
-    local origin = Camera.CFrame.Position
-    local dir = (targetPart.Position - origin).Unit * 1000
-    local ray = Ray.new(origin, dir)
-    local hit = Workspace:FindPartOnRay(ray, LocalPlayer.Character, false, true)
-    return hit and hit:IsDescendantOf(targetPart.Parent)
+local function getEnemyFolder()
+    if not isAlive() then return nil end
+    local t, ct = getTFolder(), getCTFolder()
+    if t and t:FindFirstChild(LocalPlayer.Name) then return ct end
+    if ct and ct:FindFirstChild(LocalPlayer.Name) then return t end
+    return nil
 end
 
---// ==================== DRAWING LIBRARY (for ESP & FOV) ====================
-local Drawing = nil
-pcall(function()
-    Drawing = loadstring(game:HttpGet("https://raw.githubusercontent.com/Insei/PenisMan/refs/heads/main/DrawingLib.lua"))()
-end)
-if not Drawing then
-    pcall(function() Drawing = {}; Drawing.new = function() return {} end end)
-end
+-- Features state
+local Aimbot = {Enabled = false, Silent = true, FOV = 200, Smoothness = 0.1, HitPart = "Head", VisibleCheck = true, TeamCheck = true}
+local Triggerbot = {Enabled = false, Delay = 0}
+local Hitbox = {Enabled = false, Size = 3}
+local ESP = {Enabled = false, Box = true, Name = true, HealthBar = true, Distance = true}
+local Bhop = false
+local AntiFlash = false
+local AntiSmoke = false
+local UseController = false
+local ControllerSensitivity = 0.5
 
---// ==================== ESP CACHE & UPDATE ====================
-local ESPCache = {}
+-- Drawing objects
+local FOVCircle = Drawing.new("Circle")
+FOVCircle.Position = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+FOVCircle.Radius = Aimbot.FOV
+FOVCircle.Filled = false          -- outline only
+FOVCircle.Color = Color3.fromRGB(255, 255, 255)
+FOVCircle.Visible = false
+FOVCircle.Thickness = 1
+
+-- Silent aim target storage
 local SilentAimTarget = nil
 
-local function createESP(player)
-    local esp = {}
-    if Drawing and Drawing.new then
-        esp.box = Drawing.new("Square")
-        esp.box.Visible = false
-        esp.box.Color = Color3.new(1,1,1)
-        esp.box.Thickness = 1
-        esp.box.Filled = false
-
-        esp.name = Drawing.new("Text")
-        esp.name.Visible = false
-        esp.name.Center = true
-        esp.name.Outline = true
-        esp.name.Font = 0
-        esp.name.Size = 13
-
-        esp.healthBar = Drawing.new("Square")
-        esp.healthBar.Visible = false
-        esp.healthBar.Filled = true
-
-        esp.distance = Drawing.new("Text")
-        esp.distance.Visible = false
-        esp.distance.Center = true
-        esp.distance.Outline = true
-        esp.distance.Font = 0
-        esp.distance.Size = 12
-
-        esp.skeleton = {}
-        for i=1,10 do
-            local line = Drawing.new("Line")
-            line.Visible = false
-            line.Color = Color3.new(1,1,1)
-            table.insert(esp.skeleton, line)
-        end
-    end
-    ESPCache[player] = esp
-    return esp
-end
-
-for _, player in pairs(Players:GetPlayers()) do
-    if player ~= LocalPlayer then createESP(player) end
-end
-Players.PlayerAdded:Connect(function(player) if player ~= LocalPlayer then createESP(player) end end)
-Players.PlayerRemoving:Connect(function(player) ESPCache[player] = nil end)
-
-local function getBonePos(char, boneName)
-    local part = char:FindFirstChild(boneName)
-    return part and part.Position
-end
-
-local function updateESP()
-    for player, esp in pairs(ESPCache) do
-        local char = player.Character
-        if not char or player == LocalPlayer then
-            if esp.box then esp.box.Visible = false end
-            if esp.name then esp.name.Visible = false end
-            if esp.healthBar then esp.healthBar.Visible = false end
-            if esp.distance then esp.distance.Visible = false end
-            if esp.skeleton then for _,v in pairs(esp.skeleton) do v.Visible = false end end
-            continue
-        end
-        local hrp = getHRP(char)
-        local head = getHead(char)
-        if not hrp or not head then continue end
-        local hrpPos, onScreen1 = Camera:WorldToViewportPoint(hrp.Position)
-        local headPos, onScreen2 = Camera:WorldToViewportPoint(head.Position)
-        if onScreen1 and onScreen2 then
-            local scale = 1 / (hrpPos.Z * math.tan(math.rad(Camera.FieldOfView/2)) * 2)
-            local height = math.abs(headPos.Y - hrpPos.Y) * scale
-            local width = height / 2
-            local x = hrpPos.X - width/2
-            local y = headPos.Y
-
-            if Settings.Visuals.ESP.Box and esp.box then
-                esp.box.Visible = true
-                esp.box.Size = Vector2.new(width, height)
-                esp.box.Position = Vector2.new(x, y)
-            elseif esp.box then
-                esp.box.Visible = false
-            end
-
-            if Settings.Visuals.ESP.Name and esp.name then
-                esp.name.Visible = true
-                esp.name.Text = player.Name
-                esp.name.Position = Vector2.new(hrpPos.X, y - 15)
-            elseif esp.name then
-                esp.name.Visible = false
-            end
-
-            if Settings.Visuals.ESP.HealthBar and esp.healthBar then
-                local humanoid = getHumanoid(char)
-                if humanoid then
-                    local health = humanoid.Health / humanoid.MaxHealth
-                    esp.healthBar.Visible = true
-                    esp.healthBar.Size = Vector2.new(2, height * health)
-                    esp.healthBar.Position = Vector2.new(x - 6, y + height * (1 - health))
-                    esp.healthBar.Color = Color3.new(1-health, health, 0)
-                else
-                    esp.healthBar.Visible = false
-                end
-            elseif esp.healthBar then
-                esp.healthBar.Visible = false
-            end
-
-            if Settings.Visuals.ESP.Distance and esp.distance then
-                local dist = (Camera.CFrame.Position - hrp.Position).Magnitude
-                esp.distance.Visible = true
-                esp.distance.Text = string.format("%.0f", dist)
-                esp.distance.Position = Vector2.new(hrpPos.X, y + height + 5)
-            elseif esp.distance then
-                esp.distance.Visible = false
-            end
-
-            if Settings.Visuals.ESP.Skeleton and esp.skeleton then
-                local bones = {
-                    {"Head", "UpperTorso"},
-                    {"UpperTorso", "LowerTorso"},
-                    {"LeftUpperArm", "LeftLowerArm"},
-                    {"LeftLowerArm", "LeftHand"},
-                    {"RightUpperArm", "RightLowerArm"},
-                    {"RightLowerArm", "RightHand"},
-                    {"LeftUpperLeg", "LeftLowerLeg"},
-                    {"LeftLowerLeg", "LeftFoot"},
-                    {"RightUpperLeg", "RightLowerLeg"},
-                    {"RightLowerLeg", "RightFoot"},
-                }
-                for i, bonePair in ipairs(bones) do
-                    if esp.skeleton[i] then
-                        local p1 = getBonePos(char, bonePair[1])
-                        local p2 = getBonePos(char, bonePair[2])
-                        if p1 and p2 then
-                            local s1, o1 = Camera:WorldToViewportPoint(p1)
-                            local s2, o2 = Camera:WorldToViewportPoint(p2)
-                            if o1 and o2 then
-                                esp.skeleton[i].Visible = true
-                                esp.skeleton[i].From = Vector2.new(s1.X, s1.Y)
-                                esp.skeleton[i].To = Vector2.new(s2.X, s2.Y)
-                            else
-                                esp.skeleton[i].Visible = false
-                            end
-                        else
-                            esp.skeleton[i].Visible = false
-                        end
-                    end
-                end
-            elseif esp.skeleton then
-                for _,v in pairs(esp.skeleton) do v.Visible = false end
-            end
-        else
-            if esp.box then esp.box.Visible = false end
-            if esp.name then esp.name.Visible = false end
-            if esp.healthBar then esp.healthBar.Visible = false end
-            if esp.distance then esp.distance.Visible = false end
-            if esp.skeleton then for _,v in pairs(esp.skeleton) do v.Visible = false end end
-        end
-    end
-end
-
---// ==================== AIMBOT TARGET ACQUISITION ====================
-local function getTarget()
+-- =============================================
+--  AIMBOT & FOV
+-- =============================================
+local function getClosestEnemy()
     local closest = nil
-    local closestDist = Settings.Aimbot.FOV
+    local closestDist = Aimbot.FOV
     local center = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
-    for _, player in pairs(Players:GetPlayers()) do
-        if player == LocalPlayer or teamCheck(player) then continue end
-        local char = player.Character
-        if not char then continue end
+    local enemyFolder = getEnemyFolder()
+    if not enemyFolder then return nil end
+
+    for _, enemy in pairs(enemyFolder:GetChildren()) do
+        local hum = enemy:FindFirstChildWhichIsA("Humanoid")
         local part
-        if Settings.Aimbot.HitPart == "Head" then part = getHead(char)
-        elseif Settings.Aimbot.HitPart == "UpperTorso" then part = char:FindFirstChild("UpperTorso")
-        else part = getHRP(char) end
-        if not part then continue end
+        if Aimbot.HitPart == "Head" then part = enemy:FindFirstChild("Head")
+        elseif Aimbot.HitPart == "UpperTorso" then part = enemy:FindFirstChild("UpperTorso")
+        else part = enemy:FindFirstChild("HumanoidRootPart") end
+        if not hum or hum.Health <= 0 or not part then continue end
+
         local pos, onScreen = Camera:WorldToViewportPoint(part.Position)
         if not onScreen then continue end
         local dist = (Vector2.new(pos.X, pos.Y) - center).Magnitude
         if dist < closestDist then
-            if Settings.Aimbot.VisibleCheck and not isVisible(part) then continue end
+            if Aimbot.VisibleCheck and not isVisible(part) then continue end
             closestDist = dist
-            closest = {Player = player, Part = part, ScreenPos = pos}
+            closest = part
         end
     end
     return closest
 end
 
---// ==================== FOV CIRCLE (OUTLINE ONLY) ====================
-local fovCircle = Drawing.new("Circle")
-fovCircle.Visible = false
-fovCircle.Color = Color3.new(1,0,0)
-fovCircle.Thickness = 1
-fovCircle.NumSides = 60
-fovCircle.Filled = false
+local function isVisible(part)
+    local origin = Camera.CFrame.Position
+    local dir = (part.Position - origin).Unit * 1000
+    local ray = Ray.new(origin, dir)
+    local hit = Workspace:FindPartOnRay(ray, LocalPlayer.Character, false, true)
+    return hit and hit:IsDescendantOf(part.Parent)
+end
 
-RunService.RenderStepped:Connect(function()
-    if Settings.Aimbot.Enabled then
-        fovCircle.Visible = true
-        fovCircle.Radius = Settings.Aimbot.FOV
-        fovCircle.Position = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
-    else
-        fovCircle.Visible = false
-    end
+-- Aim key (right mouse)
+local isAiming = false
+UserInputService.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then isAiming = true end
+end)
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then isAiming = false end
 end)
 
---// ==================== CAMERA AIMBOT (NON‑SILENT) ====================
+-- Camera aimbot (non‑silent) and silent aim targeting
 RunService.RenderStepped:Connect(function()
-    if Settings.Aimbot.Enabled and not Settings.Aimbot.Silent then
-        local target = getTarget()
-        if target then
-            local smooth = Settings.Aimbot.Smoothness
-            local targetPos = target.Part.Position
-            local newCF = CFrame.new(Camera.CFrame.Position, targetPos)
-            Camera.CFrame = Camera.CFrame:Lerp(newCF, smooth)
-        end
-    end
-    if Settings.Aimbot.Enabled and Settings.Aimbot.Silent then
-        SilentAimTarget = getTarget()
+    -- FOV circle
+    if Aimbot.Enabled then
+        FOVCircle.Position = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+        FOVCircle.Radius = Aimbot.FOV
+        FOVCircle.Visible = true
     else
+        FOVCircle.Visible = false
+    end
+
+    if not Aimbot.Enabled or not isAlive() then
         SilentAimTarget = nil
+        return
+    end
+
+    local target = getClosestEnemy()
+    SilentAimTarget = (Aimbot.Silent and target) or nil
+
+    if not Aimbot.Silent and isAiming and target then
+        -- move mouse smoothly toward target
+        local headPos = Camera:WorldToViewportPoint(target.Position)
+        local mousePos = UserInputService:GetMouseLocation()
+        local moveX = (headPos.X - mousePos.X) / (Aimbot.Smoothness * 5)
+        local moveY = (headPos.Y - mousePos.Y) / (Aimbot.Smoothness * 5)
+        if mousemoverel then mousemoverel(moveX, moveY) end
     end
 end)
 
---// ==================== SILENT AIM HOOK ====================
+-- Silent aim remote hook
+-- Replace "FireBullet" with the actual remote name from Roblox Rivals (use Dex Explorer)
 local function hookSilentAim()
-    -- Replace with the actual remote name from Roblox Rivals (use Dex Explorer)
-    for _, remote in pairs(getnilinstances()) do
-        if remote:IsA("RemoteEvent") and (remote.Name == "FireBullet" or remote.Name == "Shoot" or remote.Name == "WeaponFire") then
+    local remote = nil
+    local remotesFolder = RS:FindFirstChild("Remotes") or RS
+    if remotesFolder then
+        remote = remotesFolder:FindFirstChild("FireBullet") or remotesFolder:FindFirstChild("Shoot") or remotesFolder:FindFirstChild("WeaponFire")
+        if remote and remote:IsA("RemoteEvent") then
             local old = hookfunction(remote.FireServer, function(self, ...)
                 local args = {...}
-                if SilentAimTarget and Settings.Aimbot.Enabled and Settings.Aimbot.Silent then
-                    -- Assume first argument is the target position
-                    args[1] = SilentAimTarget.Part.Position
+                if SilentAimTarget and Aimbot.Enabled and Aimbot.Silent then
+                    args[1] = SilentAimTarget.Position   -- first arg is assumed mouse position
                 end
                 return old(self, unpack(args))
             end)
-            break
         end
     end
 end
 pcall(hookSilentAim)
 
---// ==================== TRIGGERBOT ====================
-spawn(function()
-    while task.wait(Settings.Aimbot.TriggerDelay) do
-        if Settings.Aimbot.Triggerbot and Settings.Aimbot.Enabled then
-            local target = getTarget()
-            if target then
-                mouse1press()
-                task.wait(0.05)
-                mouse1release()
-            end
-        end
-    end
-end)
+-- =============================================
+--  TRIGGERBOT
+-- =============================================
+task.spawn(function()
+    while task.wait(0.01) do
+        if Triggerbot.Enabled and isAlive() then
+            local viewportSize = Camera.ViewportSize
+            local ray = Camera:ViewportPointToRay(viewportSize.X/2, viewportSize.Y/2)
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            local ignore = {Camera}
+            if LocalPlayer.Character then table.insert(ignore, LocalPlayer.Character) end
+            params.FilterDescendantsInstances = ignore
 
---// ==================== CONTROLLER AIM (RIGHT STICK) ====================
-UIS.InputChanged:Connect(function(input)
-    if Settings.Aimbot.UseController and (input.UserInputType == Enum.UserInputType.Gamepad1 or input.UserInputType == Enum.UserInputType.Gamepad2) then
-        if input.KeyCode == Enum.KeyCode.Thumbstick2 then
-            local delta = input.Delta
-            local sens = Settings.Aimbot.ControllerSensitivity * 5
-            mousemoverel(math.floor(delta.X * sens), math.floor(delta.Y * -sens))
-        end
-    end
-end)
-
---// ==================== CHAMS ====================
-local chamHighlights = {}
-local function toggleChams(on)
-    if on then
-        for _, player in pairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer then
-                local char = player.Character or player.CharacterAdded:Wait()
-                local highlight = Instance.new("Highlight")
-                highlight.FillColor = Color3.fromRGB(255,0,0)
-                highlight.OutlineColor = Color3.new(0,0,0)
-                highlight.Parent = char
-                chamHighlights[player] = highlight
-            end
-        end
-    else
-        for _, hl in pairs(chamHighlights) do hl:Destroy() end
-        chamHighlights = {}
-    end
-end
-
---// ==================== GLOW ====================
-local glowBillboards = {}
-local function toggleGlow(on)
-    if on then
-        for _, player in pairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer then
-                local char = player.Character or player.CharacterAdded:Wait()
-                local glow = Instance.new("BillboardGui")
-                glow.Adornee = char
-                glow.Size = UDim2.new(10,0,10,0)
-                glow.StudsOffset = Vector3.new(0,2,0)
-                local frame = Instance.new("Frame", glow)
-                frame.Size = UDim2.new(1,0,1,0)
-                frame.BackgroundColor3 = Color3.new(1,0,0)
-                frame.BackgroundTransparency = 0.5
-                frame.BorderSizePixel = 0
-                glow.Parent = char
-                glowBillboards[player] = glow
-            end
-        end
-    else
-        for _, g in pairs(glowBillboards) do g:Destroy() end
-        glowBillboards = {}
-    end
-end
-
---// ==================== RADAR ====================
-local radarGui = nil
-local function toggleRadar(on)
-    if radarGui then radarGui:Destroy(); radarGui = nil end
-    if not on then return end
-    radarGui = Instance.new("ScreenGui")
-    radarGui.Parent = LocalPlayer.PlayerGui
-    local bg = Instance.new("Frame", radarGui)
-    bg.Size = UDim2.new(0, Settings.Misc.RadarSize, 0, Settings.Misc.RadarSize)
-    bg.Position = UDim2.new(1, -10 - Settings.Misc.RadarSize, 0, 10)
-    bg.BackgroundColor3 = Color3.new(0,0,0)
-    bg.BackgroundTransparency = 0.7
-    bg.BorderSizePixel = 0
-    local canvas = Instance.new("Frame", bg)
-    canvas.Size = UDim2.new(1,0,1,0)
-    canvas.BackgroundTransparency = 1
-
-    spawn(function()
-        while radarGui and Settings.Misc.Radar do
-            local localRoot = getHRP(LocalPlayer.Character)
-            if localRoot then
-                for _, player in pairs(Players:GetPlayers()) do
-                    if player == LocalPlayer then continue end
-                    local char = player.Character
-                    if not char then continue end
-                    local root = getHRP(char)
-                    if root then
-                        local relative = localRoot.CFrame:PointToObjectSpace(root.Position)
-                        local scale = Settings.Misc.RadarZoom
-                        local half = Settings.Misc.RadarSize/2
-                        local x = half + relative.X * scale
-                        local y = half - relative.Z * scale
-                        local dot = canvas:FindFirstChild(player.Name) or Instance.new("Frame", canvas)
-                        dot.Name = player.Name
-                        dot.Size = UDim2.new(0,5,0,5)
-                        dot.Position = UDim2.new(0, x-2.5, 0, y-2.5)
-                        dot.BackgroundColor3 = player.TeamColor.Color
-                        dot.BorderSizePixel = 0
+            local result = Workspace:Raycast(ray.Origin, ray.Direction * 1000, params)
+            if result and result.Instance then
+                local model = result.Instance:FindFirstAncestorOfClass("Model")
+                if model then
+                    local hum = model:FindFirstChildOfClass("Humanoid")
+                    local enemyFolder = getEnemyFolder()
+                    if hum and hum.Health > 0 and enemyFolder and model.Parent == enemyFolder then
+                        if Triggerbot.Delay > 0 then task.wait(Triggerbot.Delay/1000) end
+                        if mouse1click then mouse1click() end
+                        task.wait(0.05)
                     end
                 end
             end
-            RunService.Heartbeat:Wait()
         end
-    end)
+    end
+end)
+
+-- =============================================
+--  HITBOX EXPANDER
+-- =============================================
+local originalHeadSizes = {}
+task.spawn(function()
+    while task.wait(0.5) do
+        local enemyFolder = getEnemyFolder()
+        if enemyFolder then
+            for _, enemy in pairs(enemyFolder:GetChildren()) do
+                local head = enemy:FindFirstChild("Head")
+                local hum = enemy:FindFirstChildOfClass("Humanoid")
+                if head and hum and hum.Health > 0 then
+                    if not originalHeadSizes[head] then originalHeadSizes[head] = head.Size end
+                    if Hitbox.Enabled then
+                        head.Size = Vector3.new(Hitbox.Size, Hitbox.Size, Hitbox.Size)
+                        head.CanCollide = false
+                        head.Transparency = 0.5
+                    else
+                        if originalHeadSizes[head] then
+                            head.Size = originalHeadSizes[head]
+                            head.Transparency = 0
+                        end
+                    end
+                end
+            end
+        end
+    end
+end)
+
+-- =============================================
+--  BUNNY HOP
+-- =============================================
+RunService.RenderStepped:Connect(function()
+    if Bhop and UserInputService:IsKeyDown(Enum.KeyCode.Space) and isAlive() then
+        local char = LocalPlayer.Character
+        if char then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum and hum:GetState() ~= Enum.HumanoidStateType.Jumping and hum:GetState() ~= Enum.HumanoidStateType.Freefall then
+                hum.Jump = true
+            end
+        end
+    end
+end)
+
+-- =============================================
+--  ESP (Box, Name, Health, Distance)
+-- =============================================
+local espCache = {}
+local function createESPobj()
+    local esp = {
+        boxOutline = Drawing.new("Square"), box = Drawing.new("Square"),
+        name = Drawing.new("Text"), distance = Drawing.new("Text"),
+        healthOutline = Drawing.new("Line"), healthBar = Drawing.new("Line")
+    }
+    esp.boxOutline.Thickness = 3; esp.boxOutline.Filled = false; esp.boxOutline.Color = Color3.new(0,0,0)
+    esp.box.Thickness = 1; esp.box.Filled = false; esp.box.Color = Color3.fromRGB(255, 50, 50)
+    esp.name.Center = true; esp.name.Outline = true; esp.name.Color = Color3.new(1,1,1); esp.name.Size = 16
+    esp.distance.Center = true; esp.distance.Outline = true; esp.distance.Color = Color3.new(0.8,0.8,0.8); esp.distance.Size = 13
+    esp.healthOutline.Thickness = 3; esp.healthOutline.Color = Color3.new(0,0,0)
+    esp.healthBar.Thickness = 1; esp.healthBar.Color = Color3.new(0,1,0)
+    return esp
 end
 
---// ==================== ANTI‑AIM (DESYNC) ====================
-spawn(function()
-    while task.wait() do
-        if Settings.Misc.AntiAim and LocalPlayer.Character then
-            local humanoid = getHumanoid(LocalPlayer.Character)
-            if humanoid then humanoid.AutoRotate = false end
-            local hrp = getHRP(LocalPlayer.Character)
-            if hrp then
-                local angle = math.rad(Settings.Misc.DesyncAngle) * (math.random() > 0.5 and 1 or -1)
-                hrp.CFrame = hrp.CFrame * CFrame.Angles(0, angle, 0)
-            end
-        end
-    end
-end)
-
---// ==================== AUTO CROUCH ====================
-spawn(function()
-    while task.wait() do
-        if Settings.Misc.AutoCrouch and LocalPlayer.Character then
-            local humanoid = getHumanoid(LocalPlayer.Character)
-            if humanoid then
-                humanoid.CameraOffset = Vector3.new(0, -1, 0)
-            end
-        end
-    end
-end)
-
---// ==================== ESP RENDER LOOP ====================
 RunService.RenderStepped:Connect(function()
-    if Settings.Visuals.ESP.Enabled then
-        updateESP()
+    if not ESP.Enabled or not isAlive() then
+        for _, e in pairs(espCache) do for _, d in pairs(e) do d.Visible = false end end
+        return
+    end
+    local enemyFolder = getEnemyFolder()
+    if not enemyFolder then return end
+
+    local aliveSet = {}
+    for _, enemy in pairs(enemyFolder:GetChildren()) do
+        local hum = enemy:FindFirstChildOfClass("Humanoid")
+        local root = enemy:FindFirstChild("HumanoidRootPart")
+        local head = enemy:FindFirstChild("Head")
+        if hum and hum.Health > 0 and root and head then
+            aliveSet[enemy] = true
+            if not espCache[enemy] then espCache[enemy] = createESPobj() end
+            local esp = espCache[enemy]
+            local rootPos, onScreen = Camera:WorldToViewportPoint(root.Position)
+            local headPos = Camera:WorldToViewportPoint(head.Position + Vector3.new(0, 0.5, 0))
+            local legPos = Camera:WorldToViewportPoint(root.Position - Vector3.new(0, 3, 0))
+            if onScreen then
+                local boxH = math.abs(headPos.Y - legPos.Y)
+                local boxW = boxH / 2
+                local dist = math.floor((Camera.CFrame.Position - root.Position).Magnitude)
+
+                if ESP.Box then
+                    esp.boxOutline.Size = Vector2.new(boxW, boxH); esp.boxOutline.Position = Vector2.new(rootPos.X - boxW/2, headPos.Y); esp.boxOutline.Visible = true
+                    esp.box.Size = esp.boxOutline.Size; esp.box.Position = esp.boxOutline.Position; esp.box.Visible = true
+                else
+                    esp.boxOutline.Visible = false; esp.box.Visible = false
+                end
+
+                if ESP.HealthBar then
+                    local hpPct = hum.Health / hum.MaxHealth
+                    local barX = rootPos.X - boxW/2 - 6
+                    esp.healthOutline.From = Vector2.new(barX, headPos.Y - 1); esp.healthOutline.To = Vector2.new(barX, headPos.Y + boxH + 1); esp.healthOutline.Visible = true
+                    esp.healthBar.From = Vector2.new(barX, headPos.Y + boxH); esp.healthBar.To = Vector2.new(barX, headPos.Y + boxH - (boxH * hpPct))
+                    esp.healthBar.Color = Color3.new(1 - hpPct, hpPct, 0); esp.healthBar.Visible = true
+                else
+                    esp.healthOutline.Visible = false; esp.healthBar.Visible = false
+                end
+
+                esp.name.Text = ESP.Name and enemy.Name or ""; esp.name.Position = Vector2.new(rootPos.X, headPos.Y - 20); esp.name.Visible = ESP.Name
+                esp.distance.Text = ESP.Distance and ("[" .. dist .. "m]") or ""; esp.distance.Position = Vector2.new(rootPos.X, headPos.Y + boxH + 2); esp.distance.Visible = ESP.Distance
+            else
+                for _, d in pairs(esp) do d.Visible = false end
+            end
+        end
+    end
+    -- Cleanup dead enemies
+    for enemy, esp in pairs(espCache) do
+        if not aliveSet[enemy] then
+            for _, d in pairs(esp) do d:Remove() end
+            espCache[enemy] = nil
+        end
     end
 end)
 
---// ==================== WINDUI INTERFACE ====================
-local Window = WindUI:CreateWindow({
-    Title = "Rivals HvH | v3.0",
-    Folder = "rivals_hvh",
-    Icon = "solar:target-bold",
-    Theme = "Dark",
-    OpenButton = {
-        Title = "Open HvH",
-        Enabled = true,
-        Scale = 0.5,
-    },
-})
+-- =============================================
+--  ANTI-FLASH & ANTI-SMOKE
+-- =============================================
+task.spawn(function()
+    while task.wait(0.2) do
+        if AntiFlash then
+            local gui = LocalPlayer.PlayerGui:FindFirstChild("FlashbangEffect")
+            local effect = Lighting:FindFirstChild("FlashbangColorCorrection")
+            if gui then gui:Destroy() end
+            if effect then effect:Destroy() end
+        end
+    end
+end)
+task.spawn(function()
+    while task.wait(0.5) do
+        if AntiSmoke then
+            local debris = Workspace:FindFirstChild("Debris")
+            if debris then
+                for _, folder in pairs(debris:GetChildren()) do
+                    if string.match(folder.Name, "Voxel") then folder:ClearAllChildren(); folder:Destroy() end
+                end
+            end
+        end
+    end
+end)
 
--- Aimbot Tab
-local AimTab = Window:Tab({ Title = "Aimbot", Icon = "solar:target-bold" })
+-- =============================================
+--  CONTROLLER AIM ASSIST
+-- =============================================
+UserInputService.InputChanged:Connect(function(input)
+    if UseController and (input.UserInputType == Enum.UserInputType.Gamepad1 or input.UserInputType == Enum.UserInputType.Gamepad2) then
+        if input.KeyCode == Enum.KeyCode.Thumbstick2 then
+            local delta = input.Delta
+            local sens = ControllerSensitivity * 5
+            if mousemoverel then
+                mousemoverel(math.floor(delta.X * sens), math.floor(delta.Y * -sens))
+            end
+        end
+    end
+end)
 
-AimTab:Section({ Title = "Main Settings" })
-    :Toggle({ Title = "Enable Aimbot", Value = false, Callback = function(v) Settings.Aimbot.Enabled = v end })
-    :Toggle({ Title = "Silent Aim (Raycast)", Value = true, Callback = function(v) Settings.Aimbot.Silent = v end })
-    :Toggle({ Title = "Triggerbot", Value = false, Callback = function(v) Settings.Aimbot.Triggerbot = v end })
-    :Toggle({ Title = "Visibility Check", Value = true, Callback = function(v) Settings.Aimbot.VisibleCheck = v end })
-    :Toggle({ Title = "Team Check", Value = true, Callback = function(v) Settings.Aimbot.TeamCheck = v end })
-    :Toggle({ Title = "Use Controller (Right Stick)", Value = false, Callback = function(v) Settings.Aimbot.UseController = v end })
+-- =============================================
+--  UI CREATION
+-- =============================================
+local Tab_Combat  = Window:CreateTab("Combat", "crosshair")
+local Tab_Visuals = Window:CreateTab("Visuals", "eye")
+local Tab_Misc    = Window:CreateTab("Misc", "settings")
 
-AimTab:Section({ Title = "Aim Parameters" })
-    :Slider({ Title = "FOV", Step = 10, Value = { Min = 10, Max = 500, Default = 200 }, Callback = function(v) Settings.Aimbot.FOV = v end })
-    :Slider({ Title = "Smoothness", Step = 0.01, Value = { Min = 0.01, Max = 1, Default = 0.1 }, Callback = function(v) Settings.Aimbot.Smoothness = v end })
-    :Slider({ Title = "Controller Sensitivity", Step = 0.1, Value = { Min = 0.1, Max = 2, Default = 0.5 }, Callback = function(v) Settings.Aimbot.ControllerSensitivity = v end })
-    :Slider({ Title = "Trigger Delay", Step = 0.05, Value = { Min = 0.05, Max = 1, Default = 0.1 }, Callback = function(v) Settings.Aimbot.TriggerDelay = v end })
-    :Dropdown({ Title = "Hit Part", Values = { "Head", "UpperTorso", "HumanoidRootPart" }, Value = "Head", Callback = function(v) Settings.Aimbot.HitPart = v end })
+-- ---- Aimbot Section ----
+Tab_Combat:CreateSection("Aimbot")
+Tab_Combat:CreateToggle({Name = "Enable Aimbot", CurrentValue = false, Callback = function(v) Aimbot.Enabled = v end})
+Tab_Combat:CreateToggle({Name = "Silent Aim (Raycast)", CurrentValue = true, Callback = function(v) Aimbot.Silent = v end})
+Tab_Combat:CreateToggle({Name = "Visibility Check", CurrentValue = true, Callback = function(v) Aimbot.VisibleCheck = v end})
+Tab_Combat:CreateToggle({Name = "Show FOV Circle", CurrentValue = false, Callback = function(v) -- FOV circle is always shown when aimbot enabled in this script, but we can hide via this toggle
+    -- We'll just use it as a master toggle for the circle visibility, independent of aimbot on/off
+end})
+Tab_Combat:CreateSlider({Name = "FOV", Range = {10, 500}, Increment = 10, Suffix = "px", CurrentValue = 200, Callback = function(v) Aimbot.FOV = v end})
+Tab_Combat:CreateSlider({Name = "Smoothness", Range = {1, 10}, Increment = 1, Suffix = " (lower = faster)", CurrentValue = 3, Callback = function(v) Aimbot.Smoothness = v/10 end})  -- 0.1..1
+Tab_Combat:CreateDropdown({Name = "Hit Part", Options = {"Head", "UpperTorso", "HumanoidRootPart"}, CurrentOption = {"Head"}, Callback = function(opt) Aimbot.HitPart = opt[1] end})
 
--- ESP Tab
-local ESPTab = Window:Tab({ Title = "ESP", Icon = "solar:eye-bold" })
+-- ---- Triggerbot Section ----
+Tab_Combat:CreateSection("Triggerbot")
+Tab_Combat:CreateToggle({Name = "Enable Triggerbot", CurrentValue = false, Callback = function(v) Triggerbot.Enabled = v end})
+Tab_Combat:CreateSlider({Name = "Shot Delay", Range = {0, 500}, Increment = 10, Suffix = "ms", CurrentValue = 0, Callback = function(v) Triggerbot.Delay = v end})
 
-ESPTab:Section({ Title = "ESP Toggles" })
-    :Toggle({ Title = "Enable ESP", Value = true, Callback = function(v) Settings.Visuals.ESP.Enabled = v end })
-    :Toggle({ Title = "Box", Value = true, Callback = function(v) Settings.Visuals.ESP.Box = v end })
-    :Toggle({ Title = "Name", Value = true, Callback = function(v) Settings.Visuals.ESP.Name = v end })
-    :Toggle({ Title = "Health Bar", Value = true, Callback = function(v) Settings.Visuals.ESP.HealthBar = v end })
-    :Toggle({ Title = "Distance", Value = true, Callback = function(v) Settings.Visuals.ESP.Distance = v end })
-    :Toggle({ Title = "Skeleton", Value = false, Callback = function(v) Settings.Visuals.ESP.Skeleton = v end })
+-- ---- Hitbox Expander ----
+Tab_Combat:CreateSection("Hitbox Expander")
+Tab_Combat:CreateToggle({Name = "Enable Hitbox", CurrentValue = false, Callback = function(v) Hitbox.Enabled = v end})
+Tab_Combat:CreateSlider({Name = "Hitbox Size", Range = {1, 3}, Increment = 0.1, Suffix = " Studs", CurrentValue = 3, Callback = function(v) Hitbox.Size = v end})
 
--- Visuals Tab
-local VisTab = Window:Tab({ Title = "Visuals", Icon = "solar:palette-bold" })
+-- ---- Movement ----
+Tab_Combat:CreateSection("Movement")
+Tab_Combat:CreateToggle({Name = "Bunny Hop (Hold Space)", CurrentValue = false, Callback = function(v) Bhop = v end})
 
-VisTab:Section({ Title = "World Visuals" })
-    :Toggle({ Title = "Chams", Value = false, Callback = toggleChams })
-    :Toggle({ Title = "Glow", Value = false, Callback = toggleGlow })
-    :Toggle({ Title = "Night Mode", Value = false, Callback = function(v) Settings.Visuals.NightMode = v; Lighting.ClockTime = v and 0 or 14; Lighting.Brightness = v and 0.5 or 2 end })
-    :Toggle({ Title = "Fullbright", Value = false, Callback = function(v) Settings.Visuals.Fullbright = v; Lighting.Ambient = v and Color3.new(1,1,1) or Color3.new(0,0,0) end })
+-- ---- Controller ----
+Tab_Combat:CreateSection("Controller")
+Tab_Combat:CreateToggle({Name = "Use Controller Aim (Right Stick)", CurrentValue = false, Callback = function(v) UseController = v end})
+Tab_Combat:CreateSlider({Name = "Controller Sensitivity", Range = {0.1, 2}, Increment = 0.1, CurrentValue = 0.5, Callback = function(v) ControllerSensitivity = v end})
 
--- Misc Tab
-local MiscTab = Window:Tab({ Title = "Misc", Icon = "solar:settings-bold" })
+-- ---- Visuals - ESP ----
+Tab_Visuals:CreateSection("ESP")
+Tab_Visuals:CreateToggle({Name = "Enable ESP", CurrentValue = false, Callback = function(v) ESP.Enabled = v end})
+Tab_Visuals:CreateToggle({Name = "Box", CurrentValue = true, Callback = function(v) ESP.Box = v end})
+Tab_Visuals:CreateToggle({Name = "Name", CurrentValue = true, Callback = function(v) ESP.Name = v end})
+Tab_Visuals:CreateToggle({Name = "Health Bar", CurrentValue = true, Callback = function(v) ESP.HealthBar = v end})
+Tab_Visuals:CreateToggle({Name = "Distance", CurrentValue = true, Callback = function(v) ESP.Distance = v end})
 
-MiscTab:Section({ Title = "Radar" })
-    :Toggle({ Title = "Radar", Value = true, Callback = toggleRadar })
-    :Slider({ Title = "Radar Size", Step = 10, Value = { Min = 100, Max = 400, Default = 200 }, Callback = function(v) Settings.Misc.RadarSize = v; toggleRadar(Settings.Misc.Radar) end })
-    :Slider({ Title = "Radar Zoom", Step = 0.1, Value = { Min = 0.5, Max = 5, Default = 1 }, Callback = function(v) Settings.Misc.RadarZoom = v end })
+-- ---- Visuals - World ----
+Tab_Visuals:CreateSection("World Effects")
+Tab_Visuals:CreateToggle({Name = "Anti-Flashbang", CurrentValue = false, Callback = function(v) AntiFlash = v end})
+Tab_Visuals:CreateToggle({Name = "Anti-Smoke", CurrentValue = false, Callback = function(v) AntiSmoke = v end})
 
-MiscTab:Section({ Title = "Other" })
-    :Toggle({ Title = "Anti‑Aim (Desync)", Value = false, Callback = function(v) Settings.Misc.AntiAim = v end })
-    :Slider({ Title = "Desync Angle", Step = 5, Value = { Min = 0, Max = 90, Default = 45 }, Callback = function(v) Settings.Misc.DesyncAngle = v end })
-    :Toggle({ Title = "Auto Crouch", Value = false, Callback = function(v) Settings.Misc.AutoCrouch = v end })
+-- ---- Misc ----
+Tab_Misc:CreateSection("Other")
+Tab_Misc:CreateButton({Name = "Unload All Features", Callback = function()
+    Aimbot.Enabled = false
+    Triggerbot.Enabled = false
+    Hitbox.Enabled = false
+    ESP.Enabled = false
+    Bhop = false
+    AntiFlash = false
+    AntiSmoke = false
+    UseController = false
+    Rayfield:Notify({Title = "HvH", Content = "All features disabled.", Duration = 3})
+end})
 
--- Stop all features button (optional, stops loops not toggles)
-Window:Button({
-    Title = "STOP ALL",
-    Color = Color3.fromRGB(255,0,0),
-    Callback = function()
-        -- Reset toggles
-        Settings.Aimbot.Enabled = false
-        Settings.Aimbot.Triggerbot = false
-        Settings.Visuals.Chams = false; toggleChams(false)
-        Settings.Visuals.Glow = false; toggleGlow(false)
-        Settings.Misc.Radar = false; toggleRadar(false)
-        Settings.Misc.AntiAim = false
-        Settings.Misc.AutoCrouch = false
-        WindUI:Notify({ Title = "Stopped", Content = "All features disabled." })
-    end,
-})
+-- Load saved configuration (optional, Rayfield handles via ConfigurationSaving)
+Rayfield:LoadConfiguration()
 
--- Start radar on load
-pcall(function() toggleRadar(true) end)
-
-WindUI:Notify({ Title = "Rivals HvH", Content = "Loaded! Silent Aim remote may need adjustment." })
-print("// Roblox Rivals HvH – WindUI version ready.")
+Rayfield:Notify({Title = "Rivals HvH", Content = "Loaded! Silent aim remote may need manual adjustment.", Duration = 5})
+print("Roblox Rivals HvH (Rayfield) ready. Silent aim remote name: FireBullet (change if needed).")
