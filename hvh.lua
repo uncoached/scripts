@@ -1,10 +1,7 @@
---// Universal HvH Script (WindUI) – Raycast Silent Aim
+--// Universal HvH Script (WindUI) – Viewport Aim + Raycast Silent Aim
+--// Full ESP (Box, Name, Health, Distance, Skeleton [R6/R15], Tracers)
 --// Works in most Roblox FPS games. Auto‑detects common weapon remotes.
---// If Silent Aim doesn't work, enter the correct remote name in the UI.
 --// All exploit functions are checked before use – no crashes.
---//
---// This version uses proper WindUI syntax (no method chaining on sections)
---// to ensure all UI elements appear correctly.
 
 local WindUI = nil
 local function loadWindUI()
@@ -34,8 +31,10 @@ local RS = game:GetService("ReplicatedStorage")
 local Settings = {
     Aimbot = {
         Enabled = false,
-        Silent = true,
+        CameraAim = false,           -- viewport aim (mouse movement)
+        Silent = true,               -- raycast silent aim
         FOV = 200,
+        ShowFOV = true,
         Smoothness = 0.1,
         HitPart = "Head",
         VisibleCheck = true,
@@ -56,6 +55,8 @@ local Settings = {
         Name = true,
         HealthBar = true,
         Distance = true,
+        Tracers = true,
+        Skeleton = true,
     },
     Bhop = false,
     AntiFlash = false,
@@ -141,10 +142,10 @@ UIS.InputEnded:Connect(function(input)
     if input.UserInputType == Settings.Aimbot.AimKey then isAiming = false end
 end)
 
--- ================= RENDER LOOP (FOV + CAMERA AIM) =================
+-- ================= RENDER LOOP (FOV + CAMERA AIM + TARGET STORAGE) =================
 RunService.RenderStepped:Connect(function()
-    -- FOV circle
-    if Settings.Aimbot.Enabled then
+    -- FOV circle visibility
+    if Settings.Aimbot.Enabled and Settings.Aimbot.ShowFOV then
         FOVCircle.Position = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
         FOVCircle.Radius = Settings.Aimbot.FOV
         FOVCircle.Visible = true
@@ -160,18 +161,18 @@ RunService.RenderStepped:Connect(function()
     local target = getClosestEnemy()
     SilentAimTarget = (Settings.Aimbot.Silent and target) or nil
 
-    if not Settings.Aimbot.Silent and isAiming and target then
-        local headPos = Camera:WorldToViewportPoint(target.Position)
+    -- Viewport/camera aimbot
+    if Settings.Aimbot.CameraAim and isAiming and target then
+        local targetPos = Camera:WorldToViewportPoint(target.Position)
         local mousePos = UIS:GetMouseLocation()
-        local moveX = (headPos.X - mousePos.X) / (Settings.Aimbot.Smoothness * 5)
-        local moveY = (headPos.Y - mousePos.Y) / (Settings.Aimbot.Smoothness * 5)
+        local moveX = (targetPos.X - mousePos.X) / (Settings.Aimbot.Smoothness * 5)
+        local moveY = (targetPos.Y - mousePos.Y) / (Settings.Aimbot.Smoothness * 5)
         if mousemoverel then mousemoverel(moveX, moveY) end
     end
 end)
 
 -- ================= SILENT AIM HOOK =================
 local function hookSilentAim(remoteName)
-    -- Try to find and hook the remote
     local function findRemote(name)
         for _, remote in ipairs(RS:GetDescendants()) do
             if remote:IsA("RemoteEvent") and remote.Name == name then
@@ -183,7 +184,6 @@ local function hookSilentAim(remoteName)
 
     local remote = findRemote(remoteName)
     if not remote then
-        -- Try a few common names
         for _, name in ipairs({"FireBullet", "Shoot", "WeaponFire", "Fire", "RaycastHit"}) do
             remote = findRemote(name)
             if remote then break end
@@ -203,7 +203,6 @@ local function hookSilentAim(remoteName)
     return false
 end
 
--- Initial hook attempt
 local silentAimHooked = false
 pcall(function() silentAimHooked = hookSilentAim(Settings.SilentAimRemote) end)
 
@@ -279,26 +278,96 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- ================= ESP =================
+-- ================= ESP (Full: Box, Name, Health, Distance, Tracers, Skeleton for R6/R15) =================
 local espCache = {}
+
+-- Helper: return bone positions for R6 and R15
+local function getBonePositions(char)
+    local bones = {}
+    -- Common bones
+    local head = char:FindFirstChild("Head")
+    local torso = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
+    local leftArm = char:FindFirstChild("LeftUpperArm") or char:FindFirstChild("Left Arm")
+    local rightArm = char:FindFirstChild("RightUpperArm") or char:FindFirstChild("Right Arm")
+    local leftLeg = char:FindFirstChild("LeftUpperLeg") or char:FindFirstChild("Left Leg")
+    local rightLeg = char:FindFirstChild("RightUpperLeg") or char:FindFirstChild("Right Leg")
+
+    local function pos(part) return part and part.Position end
+
+    if head and torso then
+        bones.Head = pos(head)
+        bones.Torso = pos(torso)
+        bones.LeftArm = pos(leftArm) or bones.Torso
+        bones.RightArm = pos(rightArm) or bones.Torso
+        bones.LeftLeg = pos(leftLeg) or (bones.Torso - Vector3.new(0,2,0))
+        bones.RightLeg = pos(rightLeg) or (bones.Torso - Vector3.new(0,2,0))
+    end
+    return bones
+end
+
 local function createESPobj()
     local esp = {
-        boxOutline = Drawing.new("Square"), box = Drawing.new("Square"),
-        name = Drawing.new("Text"), distance = Drawing.new("Text"),
-        healthOutline = Drawing.new("Line"), healthBar = Drawing.new("Line")
+        boxOutline = Drawing.new("Square"),
+        box = Drawing.new("Square"),
+        name = Drawing.new("Text"),
+        distance = Drawing.new("Text"),
+        healthOutline = Drawing.new("Line"),
+        healthBar = Drawing.new("Line"),
+        tracer = Drawing.new("Line"),
+        skeletonLines = {},
     }
     esp.boxOutline.Thickness = 3; esp.boxOutline.Filled = false; esp.boxOutline.Color = Color3.new(0,0,0)
-    esp.box.Thickness = 1; esp.box.Filled = false; esp.box.Color = Color3.fromRGB(255, 50, 50)
+    esp.box.Thickness = 1; esp.box.Filled = false; esp.box.Color = Color3.fromRGB(255,50,50)
     esp.name.Center = true; esp.name.Outline = true; esp.name.Color = Color3.new(1,1,1); esp.name.Size = 16
     esp.distance.Center = true; esp.distance.Outline = true; esp.distance.Color = Color3.new(0.8,0.8,0.8); esp.distance.Size = 13
     esp.healthOutline.Thickness = 3; esp.healthOutline.Color = Color3.new(0,0,0)
     esp.healthBar.Thickness = 1; esp.healthBar.Color = Color3.new(0,1,0)
+    esp.tracer.Thickness = 1; esp.tracer.Color = Color3.fromRGB(255,255,255); esp.tracer.Visible = false
     return esp
+end
+
+local function updateSkeleton(esp, bones)
+    -- Clear old skeleton
+    for _, line in ipairs(esp.skeletonLines) do line:Remove() end
+    esp.skeletonLines = {}
+    if not bones then return end
+
+    local bonePairs = {
+        {"Head", "Torso"},
+        {"Torso", "LeftArm"},
+        {"Torso", "RightArm"},
+        {"Torso", "LeftLeg"},
+        {"Torso", "RightLeg"},
+    }
+
+    for _, pair in ipairs(bonePairs) do
+        local b1 = bones[pair[1]]
+        local b2 = bones[pair[2]]
+        if b1 and b2 then
+            local s1, o1 = Camera:WorldToViewportPoint(b1)
+            local s2, o2 = Camera:WorldToViewportPoint(b2)
+            if o1 and o2 then
+                local line = Drawing.new("Line")
+                line.From = Vector2.new(s1.X, s1.Y)
+                line.To = Vector2.new(s2.X, s2.Y)
+                line.Color = Color3.fromRGB(255,255,255)
+                line.Thickness = 1
+                line.Visible = true
+                table.insert(esp.skeletonLines, line)
+            end
+        end
+    end
 end
 
 RunService.RenderStepped:Connect(function()
     if not Settings.ESP.Enabled then
-        for _, e in pairs(espCache) do for _, d in pairs(e) do d.Visible = false end end
+        for _, e in pairs(espCache) do
+            e.boxOutline.Visible = false; e.box.Visible = false
+            e.name.Visible = false; e.distance.Visible = false
+            e.healthOutline.Visible = false; e.healthBar.Visible = false
+            e.tracer.Visible = false
+            for _, line in ipairs(e.skeletonLines) do line.Visible = false end
+        end
         return
     end
 
@@ -315,13 +384,14 @@ RunService.RenderStepped:Connect(function()
             if not espCache[player] then espCache[player] = createESPobj() end
             local esp = espCache[player]
             local rootPos, onScreen = Camera:WorldToViewportPoint(root.Position)
-            local headPos = Camera:WorldToViewportPoint(head.Position + Vector3.new(0, 0.5, 0))
-            local legPos = Camera:WorldToViewportPoint(root.Position - Vector3.new(0, 3, 0))
+            local headPos = Camera:WorldToViewportPoint(head.Position + Vector3.new(0,0.5,0))
+            local legPos = Camera:WorldToViewportPoint(root.Position - Vector3.new(0,3,0))
             if onScreen then
                 local boxH = math.abs(headPos.Y - legPos.Y)
                 local boxW = boxH / 2
                 local dist = math.floor((Camera.CFrame.Position - root.Position).Magnitude)
 
+                -- Box
                 if Settings.ESP.Box then
                     esp.boxOutline.Size = Vector2.new(boxW, boxH); esp.boxOutline.Position = Vector2.new(rootPos.X - boxW/2, headPos.Y); esp.boxOutline.Visible = true
                     esp.box.Size = esp.boxOutline.Size; esp.box.Position = esp.boxOutline.Position; esp.box.Visible = true
@@ -329,6 +399,7 @@ RunService.RenderStepped:Connect(function()
                     esp.boxOutline.Visible = false; esp.box.Visible = false
                 end
 
+                -- Health bar
                 if Settings.ESP.HealthBar then
                     local hpPct = hum.Health / hum.MaxHealth
                     local barX = rootPos.X - boxW/2 - 6
@@ -339,16 +410,45 @@ RunService.RenderStepped:Connect(function()
                     esp.healthOutline.Visible = false; esp.healthBar.Visible = false
                 end
 
+                -- Name
                 esp.name.Text = Settings.ESP.Name and player.Name or ""; esp.name.Position = Vector2.new(rootPos.X, headPos.Y - 20); esp.name.Visible = Settings.ESP.Name
+
+                -- Distance
                 esp.distance.Text = Settings.ESP.Distance and ("[" .. dist .. "m]") or ""; esp.distance.Position = Vector2.new(rootPos.X, headPos.Y + boxH + 2); esp.distance.Visible = Settings.ESP.Distance
+
+                -- Tracers
+                if Settings.ESP.Tracers then
+                    esp.tracer.From = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y)
+                    esp.tracer.To = Vector2.new(rootPos.X, rootPos.Y)
+                    esp.tracer.Visible = true
+                else
+                    esp.tracer.Visible = false
+                end
+
+                -- Skeleton
+                if Settings.ESP.Skeleton then
+                    local bones = getBonePositions(char)
+                    updateSkeleton(esp, bones)
+                else
+                    for _, line in ipairs(esp.skeletonLines) do line:Remove() end
+                    esp.skeletonLines = {}
+                end
             else
-                for _, d in pairs(esp) do d.Visible = false end
+                esp.boxOutline.Visible = false; esp.box.Visible = false
+                esp.name.Visible = false; esp.distance.Visible = false
+                esp.healthOutline.Visible = false; esp.healthBar.Visible = false
+                esp.tracer.Visible = false
+                for _, line in ipairs(esp.skeletonLines) do line.Visible = false end
             end
         end
     end
+
+    -- Cleanup dead players
     for plr, esp in pairs(espCache) do
         if not aliveSet[plr] then
-            for _, d in pairs(esp) do d:Remove() end
+            esp.boxOutline:Remove(); esp.box:Remove(); esp.name:Remove(); esp.distance:Remove()
+            esp.healthOutline:Remove(); esp.healthBar:Remove(); esp.tracer:Remove()
+            for _, line in ipairs(esp.skeletonLines) do line:Remove() end
             espCache[plr] = nil
         end
     end
@@ -389,7 +489,7 @@ UIS.InputChanged:Connect(function(input)
     end
 end)
 
--- ================= WINDUI INTERFACE (proper syntax) =================
+-- ================= WINDUI INTERFACE =================
 local Window = WindUI:CreateWindow({
     Title = "Universal HvH",
     Folder = "universal_hvh",
@@ -399,19 +499,21 @@ local Window = WindUI:CreateWindow({
 
 -- Tabs
 local Tab_Aim = Window:Tab({ Title = "Aimbot", Icon = "solar:target-bold" })
+local Tab_ESP = Window:Tab({ Title = "ESP", Icon = "solar:eye-bold" })
 local Tab_Trig = Window:Tab({ Title = "Triggerbot", Icon = "solar:mouse-bold" })
 local Tab_Hit = Window:Tab({ Title = "Hitbox", Icon = "solar:size-bold" })
-local Tab_ESP = Window:Tab({ Title = "ESP", Icon = "solar:eye-bold" })
 local Tab_World = Window:Tab({ Title = "World", Icon = "solar:globus-bold" })
 local Tab_Move = Window:Tab({ Title = "Movement", Icon = "solar:run-bold" })
 local Tab_Ctrl = Window:Tab({ Title = "Controller", Icon = "solar:gamepad-bold" })
 local Tab_Misc = Window:Tab({ Title = "Misc", Icon = "solar:settings-bold" })
 
--- Aimbot sections and elements
+-- Aimbot sections
 do
     local Section1 = Tab_Aim:Section({ Title = "Main" })
     Section1:Toggle({ Title = "Enable Aimbot", Value = false, Callback = function(v) Settings.Aimbot.Enabled = v end })
+    Section1:Toggle({ Title = "Camera Aimbot (Viewport)", Value = false, Callback = function(v) Settings.Aimbot.CameraAim = v end })
     Section1:Toggle({ Title = "Silent Aim (Raycast)", Value = true, Callback = function(v) Settings.Aimbot.Silent = v end })
+    Section1:Toggle({ Title = "Show FOV Circle", Value = true, Callback = function(v) Settings.Aimbot.ShowFOV = v end })
     Section1:Toggle({ Title = "Visibility Check", Value = true, Callback = function(v) Settings.Aimbot.VisibleCheck = v end })
     Section1:Toggle({ Title = "Team Check", Value = false, Callback = function(v) Settings.Aimbot.TeamCheck = v end })
     Section1:Slider({ Title = "FOV", Step = 10, Value = { Min = 10, Max = 500, Default = 200 }, Callback = function(v) Settings.Aimbot.FOV = v end })
@@ -428,7 +530,7 @@ do
         Settings.SilentAimRemote = v
         local ok = pcall(function() silentAimHooked = hookSilentAim(v) end)
         if not ok or not silentAimHooked then
-            WindUI:Notify({ Title = "Error", Content = "Remote not found. Try a different name.", Duration = 3 })
+            WindUI:Notify({ Title = "Error", Content = "Remote not found.", Duration = 3 })
         else
             WindUI:Notify({ Title = "Success", Content = "Silent aim hooked!", Duration = 2 })
         end
@@ -439,12 +541,24 @@ do
             local ok = pcall(function() silentAimHooked = hookSilentAim(name) end)
             if ok and silentAimHooked then
                 Settings.SilentAimRemote = name
-                WindUI:Notify({ Title = "Detected", Content = "Hooked remote: " .. name, Duration = 3 })
+                WindUI:Notify({ Title = "Detected", Content = "Hooked: " .. name, Duration = 3 })
                 return
             end
         end
-        WindUI:Notify({ Title = "Failed", Content = "No known remote found. Enter manually.", Duration = 3 })
+        WindUI:Notify({ Title = "Failed", Content = "Enter manually.", Duration = 3 })
     end })
+end
+
+-- ESP
+do
+    local Section = Tab_ESP:Section({ Title = "Player ESP" })
+    Section:Toggle({ Title = "Enable ESP", Value = false, Callback = function(v) Settings.ESP.Enabled = v end })
+    Section:Toggle({ Title = "Box", Value = true, Callback = function(v) Settings.ESP.Box = v end })
+    Section:Toggle({ Title = "Name", Value = true, Callback = function(v) Settings.ESP.Name = v end })
+    Section:Toggle({ Title = "Health Bar", Value = true, Callback = function(v) Settings.ESP.HealthBar = v end })
+    Section:Toggle({ Title = "Distance", Value = true, Callback = function(v) Settings.ESP.Distance = v end })
+    Section:Toggle({ Title = "Tracers", Value = true, Callback = function(v) Settings.ESP.Tracers = v end })
+    Section:Toggle({ Title = "Skeleton (R6/R15)", Value = true, Callback = function(v) Settings.ESP.Skeleton = v end })
 end
 
 -- Triggerbot
@@ -459,16 +573,6 @@ do
     local Section = Tab_Hit:Section({ Title = "Hitbox" })
     Section:Toggle({ Title = "Enable Hitbox", Value = false, Callback = function(v) Settings.Hitbox.Enabled = v end })
     Section:Slider({ Title = "Head Size", Step = 0.1, Value = { Min = 1, Max = 3, Default = 3 }, Callback = function(v) Settings.Hitbox.Size = v end })
-end
-
--- ESP
-do
-    local Section = Tab_ESP:Section({ Title = "Player ESP" })
-    Section:Toggle({ Title = "Enable ESP", Value = false, Callback = function(v) Settings.ESP.Enabled = v end })
-    Section:Toggle({ Title = "Box", Value = true, Callback = function(v) Settings.ESP.Box = v end })
-    Section:Toggle({ Title = "Name", Value = true, Callback = function(v) Settings.ESP.Name = v end })
-    Section:Toggle({ Title = "Health Bar", Value = true, Callback = function(v) Settings.ESP.HealthBar = v end })
-    Section:Toggle({ Title = "Distance", Value = true, Callback = function(v) Settings.ESP.Distance = v end })
 end
 
 -- World effects
@@ -508,5 +612,5 @@ Tab_Misc:Button({
     end,
 })
 
-WindUI:Notify({ Title = "Universal HvH", Content = "Loaded! Use Auto-Detect or enter remote name for Silent Aim.", Duration = 5 })
-print("Universal HvH (Raycast Silent Aim) ready. If aim doesn't work, adjust remote name in Aimbot tab.")
+WindUI:Notify({ Title = "Universal HvH", Content = "Loaded! Camera aim + Silent aim. Full ESP with Skeleton (R6/R15).", Duration = 5 })
+print("Universal HvH (Viewport & Silent Aim + Full ESP) ready.")
