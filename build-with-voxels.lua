@@ -1,6 +1,6 @@
--- Build Exploit Pack – WindUI Edition (with block detection & scatter feature)
+-- Build Exploit Pack – WindUI Edition (with all features including Nuke)
 -- Uses PlaceBlockEvent & DestroyBlockEven. Finds blocks by UUID name pattern.
--- Features: Cage, TNT spam, Sphere Fill, Orbit, Fling, Scatter 5, Destroy All.
+-- Features: Cage, TNT spam, Sphere Fill, Orbit, Fling, Scatter 5, Nuke Target/All, Destroy All.
 
 local WindUI = nil
 pcall(function()
@@ -81,10 +81,10 @@ local function placeBlock(blockType, pos)
     processQueue()
 end
 
--- Block destruction
+-- Block detection / destruction
 local function destroyBlock(part)
     if not part or not part.Parent then return end
-    local uuid = part.Name   -- blocks are named with UUIDs
+    local uuid = part.Name   -- placed blocks are named with their UUID
     if not uuid or uuid == "" then return end
     if not uuid:find("-") then return end   -- quick UUID check
     local temp = Instance.new("Part")
@@ -109,7 +109,7 @@ local function getAllBlocks()
     return blocks
 end
 
-local function destroyAll()
+local function destroyAllBlocks()
     for _, part in ipairs(getAllBlocks()) do
         task.spawn(function() destroyBlock(part) end)
     end
@@ -314,6 +314,51 @@ TargetActions:Toggle({
     end,
 })
 
+-- Nuke Target toggle
+TargetActions:Toggle({
+    Title = "Nuke Target",
+    Callback = function(state)
+        if state then
+            startFeature("nukeTarget", function(flag)
+                local radius = 20
+                while flag.running do
+                    if not selectedTarget then task.wait(0.5); continue end
+                    local allBlocks = getAllBlocks()
+                    if #allBlocks == 0 then task.wait(0.5); continue end
+                    local targetRoot = selectedTarget.Character and selectedTarget.Character.PrimaryPart
+                    if not targetRoot then task.wait(0.5); continue end
+                    local targetPos = targetRoot.Position
+                    local closest = nil
+                    for _, part in ipairs(allBlocks) do
+                        if (part.Position - targetPos).Magnitude <= radius then
+                            closest = part
+                            break
+                        end
+                    end
+                    if closest then
+                        if character and character.PrimaryPart then
+                            pcall(function() character:PivotTo(closest.CFrame) end)
+                        end
+                        local toDelete = {}
+                        for _, part in ipairs(allBlocks) do
+                            if (part.Position - closest.Position).Magnitude <= radius then
+                                table.insert(toDelete, part)
+                            end
+                        end
+                        for _, d in ipairs(toDelete) do
+                            task.spawn(function() destroyBlock(d) end)
+                        end
+                        task.wait(0.05)
+                    else
+                        task.wait(0.5)
+                    end
+                    task.wait(0.3)
+                end
+            end)
+        else stopFeature("nukeTarget") end
+    end,
+})
+
 TargetActions:Button({
     Title = "Teleport to Target",
     Callback = function()
@@ -332,7 +377,7 @@ MainTab:Section({ Title = "Destroy All" }):Button({
     Title = "🗑️ DESTROY ALL",
     Color = Color3.fromRGB(220,20,20),
     Callback = function()
-        destroyAll()
+        destroyAllBlocks()
         WindUI:Notify({ Title = "Done", Content = "All placed blocks destroyed." })
     end,
 })
@@ -387,6 +432,39 @@ MainTab:Toggle({
                 end
             end)
         else stopFeature("cageAll") end
+    end,
+})
+
+-- Nuke All toggle
+MainTab:Toggle({
+    Title = "Nuke All",
+    Callback = function(state)
+        if state then
+            startFeature("nukeAll", function(flag)
+                local radius = 20
+                while flag.running do
+                    local allBlocks = getAllBlocks()
+                    if #allBlocks == 0 then task.wait(0.5); continue end
+                    for _, part in ipairs(allBlocks) do
+                        if not flag.running then break end
+                        if character and character.PrimaryPart then
+                            pcall(function() character:PivotTo(part.CFrame) end)
+                        end
+                        local toDelete = {}
+                        for _, other in ipairs(allBlocks) do
+                            if (other.Position - part.Position).Magnitude <= radius then
+                                table.insert(toDelete, other)
+                            end
+                        end
+                        for _, d in ipairs(toDelete) do
+                            task.spawn(function() destroyBlock(d) end)
+                        end
+                        task.wait(0.05)
+                    end
+                    task.wait(0.3)
+                end
+            end)
+        else stopFeature("nukeAll") end
     end,
 })
 
@@ -637,5 +715,5 @@ Window:Button({
     end,
 })
 
-WindUI:Notify({ Title = "Build Exploit Pack", Content = "WindUI loaded! Detects blocks by UUID name." })
-print("Build Exploit Pack – WindUI version with scatter and UUID detection loaded.")
+WindUI:Notify({ Title = "Build Exploit Pack", Content = "All features including Nuke loaded!" })
+print("Build Exploit Pack – Full version with Nuke and Destroy restored.")
