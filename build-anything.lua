@@ -1,5 +1,3 @@
--- Build Exploit Pack – WindUI Edition (Final Optimized)
--- Spammer fills radius 13 sphere, Orbit (Aura) with min/max height + Y offset, all features.
 
 local WindUI = nil
 pcall(function()
@@ -188,8 +186,8 @@ end
 
 -- ==================== UI ====================
 local Window = WindUI:CreateWindow({
-    Title = "Build Exploit Pack",
-    Folder = "BuildExploit",
+    Title = "Pickle Hub | Build Anything",
+    Folder = "xYhs7o1ha6v",
     Icon = "solar:hammer-bold",
     OpenButton = { Title = "Open", Enabled = true },
 })
@@ -708,5 +706,5 @@ Window:Button({
     end,
 })
 
-WindUI:Notify({ Title = "Build Exploit Pack", Content = "Orbit, spammer (r=13) ready." })
-print("Build Exploit Pack – Optimized Loaded.")
+WindUI:Notify({ Title = "Pickle Hub | Build Anything ", Content = "Orbit, spammer (r=13) ready." })
+print("pickle.")
