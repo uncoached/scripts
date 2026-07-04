@@ -1,45 +1,8 @@
--- Build Exploit Pack – Robust with fallbacks, error handling, and debug info
--- Place: PlaceBlockEvent:FireServer(pos, blockType, rotation, uuid, "Block")
--- Destroy: DestroyBlockEven:FireServer(tempPart, blockUUID)   (block name is its UUID)
+-- Minimal GUI Build Exploit Pack – No external UI library, works on all exploits.
+-- Uses remote: PlaceBlockEvent & DestroyBlockEven (exact spelling from spy).
+-- Features: Cage, TNT spam, Sphere fill, Orbit, Fling, Scatter 5 blocks.
 
--- ===== Compatibility Fallbacks =====
-if not task then task = { wait = wait, spawn = function(f) coroutine.wrap(f)() end } end
-if not typeof then typeof = type end
-
--- ===== Debug Helper (creates a ScreenGui if UI fails) =====
-local function showError(title, msg)
-    pcall(function()
-        local gui = Instance.new("ScreenGui")
-        gui.Parent = game:GetService("CoreGui")
-        local frame = Instance.new("Frame", gui)
-        frame.Size = UDim2.new(0, 300, 0, 100)
-        frame.Position = UDim2.new(0.5, -150, 0.5, -50)
-        frame.BackgroundColor3 = Color3.fromRGB(40,40,40)
-        local label = Instance.new("TextLabel", frame)
-        label.Size = UDim2.new(1,0,1,0)
-        label.Text = title .. "\n" .. msg
-        label.TextColor3 = Color3.fromRGB(255,100,100)
-        label.TextScaled = true
-        label.BackgroundTransparency = 1
-    end)
-end
-
--- ===== WindUI Load =====
-local WindUI = nil
-local loadSuccess, loadErr = pcall(function()
-    if game:GetService("RunService"):IsStudio() then
-        WindUI = require(game:GetService("ReplicatedStorage"):WaitForChild("WindUI"):WaitForChild("Init"))
-    else
-        WindUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
-    end
-end)
-if not WindUI then
-    warn("WindUI failed: " .. tostring(loadErr))
-    showError("UI Error", "WindUI not loaded.\n" .. tostring(loadErr))
-    return
-end
-
--- ===== Services & Player =====
+--==== Services ====
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
@@ -48,23 +11,16 @@ local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local player = Players.LocalPlayer
 
--- ===== Remotes (WaitForChild will block until found; if missing, script hangs) =====
-local placeEvent, destroyEvent
-pcall(function()
-    placeEvent = ReplicatedStorage:WaitForChild("PlaceBlockEvent")
-    destroyEvent = ReplicatedStorage:WaitForChild("DestroyBlockEven")   -- exact name from spy
-end)
-if not placeEvent then
-    showError("Remote Error", "PlaceBlockEvent not found.")
-    return
-end
-if not destroyEvent then
-    showError("Remote Error", "DestroyBlockEven not found.")
+--==== Remotes (exact names) ====
+local placeEvent = ReplicatedStorage:WaitForChild("PlaceBlockEvent", 10)
+local destroyEvent = ReplicatedStorage:WaitForChild("DestroyBlockEven", 10)
+if not placeEvent or not destroyEvent then
+    pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", {Title="Error", Text="Remote not found!"}) end)
     return
 end
 
--- Character reference
-local character = nil
+--==== Character ====
+local character
 local function onCharAdded(char)
     character = char
     char:WaitForChild("HumanoidRootPart")
@@ -72,11 +28,11 @@ end
 if player.Character then onCharAdded(player.Character) end
 player.CharacterAdded:Connect(onCharAdded)
 
--- Fling globals
+--==== Fling globals ====
 getgenv().OldPos = nil
 getgenv().FPDH = workspace.FallenPartsDestroyHeight
 
--- Thread management
+--==== Thread management ====
 local activeFeatures = {}
 local function stopFeature(name)
     if activeFeatures[name] then
@@ -88,67 +44,47 @@ end
 local function startFeature(name, loopFunc)
     stopFeature(name)
     local flag = { running = true }
-    local thread = task.spawn(function()
-        loopFunc(flag)
-    end)
+    local thread = task.spawn(function() loopFunc(flag) end)
     activeFeatures[name] = { thread = thread, running = flag }
 end
 
--- ==================== Concurrent Block Placer (50 max) ====================
-local MAX_CONCURRENT_PLACE = 50
-local placeActive = 0
+--==== Placer (50 concurrent) ====
+local MAX_CONCURRENT = 50
+local activePlaces = 0
 local placeQueue = {}
-
-local function processPlaceQueue()
-    while #placeQueue > 0 and placeActive < MAX_CONCURRENT_PLACE do
+local function processQueue()
+    while #placeQueue > 0 and activePlaces < MAX_CONCURRENT do
         local job = table.remove(placeQueue, 1)
-        placeActive = placeActive + 1
+        activePlaces = activePlaces + 1
         task.spawn(function()
             pcall(job.fn)
-            placeActive = placeActive - 1
-            if job.onComplete then job.onComplete() end
-            processPlaceQueue()
+            activePlaces = activePlaces - 1
+            processQueue()
         end)
     end
 end
-
-local function placeBlockThrottled(blockType, pos, rotation)
+local function placeBlock(blockType, pos)
     table.insert(placeQueue, {
         fn = function()
             local uuid = "{" .. HttpService:GenerateGUID(false) .. "}"
-            placeEvent:FireServer(pos, blockType, rotation or 0, uuid, "Block")
-        end,
-        onComplete = nil
+            placeEvent:FireServer(pos, blockType, 0, uuid, "Block")
+        end
     })
-    processPlaceQueue()
+    processQueue()
 end
 
-local function waitForAllPlacements()
-    repeat task.wait() until #placeQueue == 0 and placeActive == 0
-end
-
--- Place block helper
-local function placeBlock(blockType, pos)
-    placeBlockThrottled(blockType, pos, 0)
-end
-
--- Destroy a placed block part using DestroyBlockEven
-local function destroyBlockPart(part)
+--==== Destroy ====
+local function destroyBlock(part)
     if not part or not part.Parent then return end
-    -- The block's Name is its UUID (e.g., "26b8ff59-c1f6-442a-...")
     local uuid = part.Name
     if not uuid or uuid == "" then return end
-
-    local tempPart = Instance.new("Part")
-    tempPart.Parent = nil
-    pcall(function()
-        destroyEvent:FireServer(tempPart, uuid)
-    end)
-    tempPart:Destroy()
+    local temp = Instance.new("Part")
+    temp.Parent = nil
+    pcall(function() destroyEvent:FireServer(temp, uuid) end)
+    temp:Destroy()
 end
 
--- Collect all placed blocks (parts with BlockType attribute, excluding characters)
-local function getAllPlacedBlocks()
+local function getAllBlocks()
     local blocks = {}
     for _, part in ipairs(workspace:GetDescendants()) do
         if part:IsA("BasePart") and part:GetAttribute("BlockType") ~= nil then
@@ -161,19 +97,13 @@ local function getAllPlacedBlocks()
     return blocks
 end
 
--- Destroy all placed blocks
-local function destroyAllPlacedBlocks()
-    local count = 0
-    for _, part in ipairs(getAllPlacedBlocks()) do
-        task.spawn(function()
-            destroyBlockPart(part)
-            count = count + 1
-        end)
+local function destroyAll()
+    for _, part in ipairs(getAllBlocks()) do
+        task.spawn(function() destroyBlock(part) end)
     end
-    WindUI:Notify({ Title = "Destroy", Content = "Queued destruction for " .. #getAllPlacedBlocks() .. " blocks." })
 end
 
--- Instant cage (teleports local player, places 124 blocks via throttler)
+--==== Cage (teleports to target, fills 5x5 grid) ====
 local function cagePlayer(target)
     if not target or not target.Character or not target.Character.PrimaryPart then return end
     local root = target.Character.PrimaryPart
@@ -191,20 +121,18 @@ local function cagePlayer(target)
     end
 end
 
--- Fling function (unchanged from original)
-local function SkidFling(TargetPlayer, flag)
+--==== Fling ====
+local function fling(targetPlayer, flag)
     local Character = character
     local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
     local RootPart = Humanoid and Humanoid.RootPart
-    local TCharacter = TargetPlayer.Character
+    local TCharacter = targetPlayer.Character
     if not TCharacter then return end
-
     local THumanoid = TCharacter:FindFirstChildOfClass("Humanoid")
     local TRootPart = THumanoid and THumanoid.RootPart
     local THead = TCharacter:FindFirstChild("Head")
     local Accessory = TCharacter:FindFirstChildOfClass("Accessory")
     local Handle = Accessory and Accessory:FindFirstChild("Handle")
-
     if Character and Humanoid and RootPart then
         if RootPart.Velocity.Magnitude < 50 then getgenv().OldPos = RootPart.CFrame end
         if THumanoid and THumanoid.Sit then return end
@@ -228,32 +156,32 @@ local function SkidFling(TargetPlayer, flag)
                 if RootPart and THumanoid then
                     if BasePart.Velocity.Magnitude < 50 then
                         Angle = Angle + 100
-                        FPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle),0 ,0))
+                        FPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle),0,0))
                         task.wait()
-                        FPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
+                        FPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle),0,0))
                         task.wait()
-                        FPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle),0 ,0))
+                        FPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle),0,0))
                         task.wait()
-                        FPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
+                        FPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle),0,0))
                         task.wait()
-                        FPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection, CFrame.Angles(math.rad(Angle),0 ,0))
+                        FPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection, CFrame.Angles(math.rad(Angle),0,0))
                         task.wait()
-                        FPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection, CFrame.Angles(math.rad(Angle), 0, 0))
+                        FPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection, CFrame.Angles(math.rad(Angle),0,0))
                         task.wait()
                     else
-                        FPos(BasePart, CFrame.new(0, 1.5, THumanoid.WalkSpeed), CFrame.Angles(math.rad(90), 0, 0))
+                        FPos(BasePart, CFrame.new(0, 1.5, THumanoid.WalkSpeed), CFrame.Angles(math.rad(90),0,0))
                         task.wait()
-                        FPos(BasePart, CFrame.new(0, -1.5, -THumanoid.WalkSpeed), CFrame.Angles(0, 0, 0))
+                        FPos(BasePart, CFrame.new(0, -1.5, -THumanoid.WalkSpeed), CFrame.Angles(0,0,0))
                         task.wait()
-                        FPos(BasePart, CFrame.new(0, 1.5, THumanoid.WalkSpeed), CFrame.Angles(math.rad(90), 0, 0))
+                        FPos(BasePart, CFrame.new(0, 1.5, THumanoid.WalkSpeed), CFrame.Angles(math.rad(90),0,0))
                         task.wait()
-                        FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90), 0, 0))
+                        FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90),0,0))
                         task.wait()
-                        FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
+                        FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0,0,0))
                         task.wait()
-                        FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90), 0, 0))
+                        FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90),0,0))
                         task.wait()
-                        FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
+                        FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0,0,0))
                         task.wait()
                     end
                 end
@@ -261,18 +189,14 @@ local function SkidFling(TargetPlayer, flag)
         end
 
         workspace.FallenPartsDestroyHeight = 0/0
-
         local BV = Instance.new("BodyVelocity")
         BV.Parent = RootPart; BV.Velocity = Vector3.new(0,0,0); BV.MaxForce = Vector3.new(9e9,9e9,9e9)
         Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
-
         if TRootPart then SFBasePart(TRootPart)
         elseif THead then SFBasePart(THead)
         elseif Handle then SFBasePart(Handle) end
-
         BV:Destroy(); Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, true)
         workspace.CurrentCamera.CameraSubject = Humanoid
-
         if getgenv().OldPos then
             repeat
                 RootPart.CFrame = getgenv().OldPos * CFrame.new(0, .5, 0)
@@ -288,535 +212,317 @@ local function SkidFling(TargetPlayer, flag)
     end
 end
 
--- ==================== UI (with error catch) ====================
-local Window
-pcall(function()
-    Window = WindUI:CreateWindow({
-        Title = "Build Exploit Pack",
-        Folder = "BuildExploit",
-        Icon = "solar:hammer-bold",
-        OpenButton = { Title = "Open", Enabled = true },
-    })
-end)
-if not Window then
-    showError("UI Error", "Failed to create WindUI window.")
-    return
+--==== GUI Setup ====
+local gui = Instance.new("ScreenGui")
+gui.Parent = game:GetService("CoreGui")
+gui.Name = "BuildExploit"
+local mainFrame = Instance.new("Frame", gui)
+mainFrame.Size = UDim2.new(0, 250, 0, 350)
+mainFrame.Position = UDim2.new(0, 10, 0, 10)
+mainFrame.BackgroundColor3 = Color3.fromRGB(30,30,30)
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Draggable = true
+
+local titleLabel = Instance.new("TextLabel", mainFrame)
+titleLabel.Size = UDim2.new(1,0,0,30)
+titleLabel.BackgroundColor3 = Color3.fromRGB(50,50,50)
+titleLabel.Text = "Build Exploit Pack"
+titleLabel.TextColor3 = Color3.fromRGB(255,255,255)
+titleLabel.Font = Enum.Font.SourceSansBold
+
+local function createButton(text, y, callback)
+    local btn = Instance.new("TextButton", mainFrame)
+    btn.Size = UDim2.new(1,-10,0,28)
+    btn.Position = UDim2.new(0,5,0,y)
+    btn.Text = text
+    btn.BackgroundColor3 = Color3.fromRGB(70,70,70)
+    btn.TextColor3 = Color3.fromRGB(255,255,255)
+    btn.Font = Enum.Font.SourceSans
+    btn.MouseButton1Click:Connect(callback)
+    return btn
 end
 
-local function refreshDropdown(dropdown)
+local function createToggle(text, y, state, callback)
+    local frame = Instance.new("Frame", mainFrame)
+    frame.Size = UDim2.new(1,-10,0,28)
+    frame.Position = UDim2.new(0,5,0,y)
+    frame.BackgroundColor3 = Color3.fromRGB(70,70,70)
+
+    local label = Instance.new("TextLabel", frame)
+    label.Size = UDim2.new(0.7,0,1,0)
+    label.Text = text
+    label.TextColor3 = Color3.fromRGB(255,255,255)
+    label.BackgroundTransparency = 1
+    label.Font = Enum.Font.SourceSans
+    label.TextXAlignment = Enum.TextXAlignment.Left
+
+    local btn = Instance.new("TextButton", frame)
+    btn.Size = UDim2.new(0.3,0,1,0)
+    btn.Position = UDim2.new(0.7,0,0,0)
+    btn.Text = state and "ON" or "OFF"
+    btn.BackgroundColor3 = state and Color3.fromRGB(0,170,0) or Color3.fromRGB(170,0,0)
+    btn.TextColor3 = Color3.fromRGB(255,255,255)
+    btn.Font = Enum.Font.SourceSansBold
+
+    local active = state
+    btn.MouseButton1Click:Connect(function()
+        active = not active
+        btn.Text = active and "ON" or "OFF"
+        btn.BackgroundColor3 = active and Color3.fromRGB(0,170,0) or Color3.fromRGB(170,0,0)
+        callback(active)
+    end)
+    return frame
+end
+
+local selectedTarget = nil
+local function refreshDropdown(drop, callback)
     local names = {}
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= player then table.insert(names, plr.Name) end
     end
-    dropdown:Refresh(names)
+    table.sort(names)
+    -- Clear old items
+    for _, child in ipairs(drop:GetChildren()) do if child:IsA("TextButton") then child:Destroy() end end
+    for _, name in ipairs(names) do
+        local btn = Instance.new("TextButton", drop)
+        btn.Size = UDim2.new(1,0,0,20)
+        btn.Text = name
+        btn.BackgroundColor3 = Color3.fromRGB(90,90,90)
+        btn.TextColor3 = Color3.fromRGB(255,255,255)
+        btn.Font = Enum.Font.SourceSans
+        btn.MouseButton1Click:Connect(function()
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr.Name == name then
+                    selectedTarget = plr
+                    if callback then callback(plr) end
+                    break
+                end
+            end
+        end)
+    end
 end
 
--- TARGET TAB
-local TargetTab = Window:Tab({ Title = "Target", Icon = "solar:user-bold" })
-local selectedTarget = nil
-local targetDropdown = TargetTab:Section({ Title = "Select Target" }):Dropdown({
-    Title = "Target Player", Values = {}, AllowNone = true,
-    Callback = function(value)
-        if value then
-            for _, plr in ipairs(Players:GetPlayers()) do
-                if plr.Name == value and plr ~= player then selectedTarget = plr return end
-            end
-        else selectedTarget = nil end
-    end,
-})
-refreshDropdown(targetDropdown)
-Players.PlayerAdded:Connect(function() refreshDropdown(targetDropdown) end)
-Players.PlayerRemoving:Connect(function(p)
-    if selectedTarget == p then selectedTarget = nil; targetDropdown:Select(nil) end
-    refreshDropdown(targetDropdown)
+-- Target dropdown area
+local targetDropFrame = Instance.new("Frame", mainFrame)
+targetDropFrame.Size = UDim2.new(1,-10,0,28)
+targetDropFrame.Position = UDim2.new(0,5,0,45)
+targetDropFrame.BackgroundColor3 = Color3.fromRGB(60,60,60)
+local targetDropLabel = Instance.new("TextLabel", targetDropFrame)
+targetDropLabel.Size = UDim2.new(1,0,1,0)
+targetDropLabel.Text = "Target: None"
+targetDropLabel.TextColor3 = Color3.fromRGB(255,255,255)
+targetDropLabel.Font = Enum.Font.SourceSans
+targetDropLabel.BackgroundTransparency = 1
+
+local targetDropList = Instance.new("Frame", mainFrame)
+targetDropList.Size = UDim2.new(1,-10,0,150)
+targetDropList.Position = UDim2.new(0,5,0,73)
+targetDropList.BackgroundColor3 = Color3.fromRGB(50,50,50)
+targetDropList.Visible = false
+
+targetDropFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        targetDropList.Visible = not targetDropList.Visible
+        if targetDropList.Visible then
+            refreshDropdown(targetDropList, function(plr)
+                targetDropLabel.Text = "Target: " .. plr.Name
+                targetDropList.Visible = false
+            end)
+        end
+    end
 end)
 
-local TargetActions = TargetTab:Section({ Title = "Actions" })
+local yOffset = 230
+createButton("Teleport to Target", yOffset, function()
+    if selectedTarget and selectedTarget.Character and selectedTarget.Character.PrimaryPart and character and character.PrimaryPart then
+        pcall(function() character:PivotTo(selectedTarget.Character.PrimaryPart.CFrame + Vector3.new(0,2,0)) end)
+    end
+end); yOffset = yOffset + 32
 
-TargetActions:Toggle({
-    Title = "Fling Target",
-    Callback = function(state)
-        if state then
-            startFeature("flingTarget", function(flag)
-                while flag.running do
-                    if not selectedTarget then task.wait(1); continue end
-                    if not selectedTarget.Parent then selectedTarget = nil; break end
-                    SkidFling(selectedTarget, flag)
-                    task.wait(0.5)
-                end
-            end)
-        else stopFeature("flingTarget") end
-    end,
-})
+createButton("Scatter 5 Blocks", yOffset, function()
+    if character and character.PrimaryPart then
+        local pos = character.PrimaryPart.Position
+        for _=1,5 do
+            local offset = Vector3.new(math.random(-10,10), math.random(-5,5), math.random(-10,10))
+            placeBlock("Oak Planks", pos + offset)
+        end
+    end
+end); yOffset = yOffset + 32
 
-TargetActions:Toggle({
-    Title = "Cage Target",
-    Callback = function(state)
-        if state then
-            startFeature("cageTarget", function(flag)
-                while flag.running do
-                    if not selectedTarget then task.wait(1); continue end
-                    cagePlayer(selectedTarget)
-                    task.wait(0.01)
-                end
-            end)
-        else stopFeature("cageTarget") end
-    end,
-})
+createButton("Destroy All", yOffset, function() destroyAll() end); yOffset = yOffset + 32
 
-TargetActions:Toggle({
-    Title = "TNT Spam",
-    Callback = function(state)
-        if state then
-            startFeature("tntSpam", function(flag)
-                while flag.running do
-                    if not selectedTarget or not selectedTarget.Character or not selectedTarget.Character.PrimaryPart then
-                        task.wait(0.5); continue
-                    end
+createToggle("Fling Target", yOffset, false, function(state)
+    if state then
+        startFeature("flingTarget", function(flag)
+            while flag.running do
+                if selectedTarget then fling(selectedTarget, flag) else task.wait(1) end
+                task.wait(0.5)
+            end
+        end)
+    else stopFeature("flingTarget") end
+end); yOffset = yOffset + 32
+
+createToggle("Cage Target", yOffset, false, function(state)
+    if state then
+        startFeature("cageTarget", function(flag)
+            while flag.running do
+                if selectedTarget then cagePlayer(selectedTarget) end
+                task.wait(0.01)
+            end
+        end)
+    else stopFeature("cageTarget") end
+end); yOffset = yOffset + 32
+
+createToggle("TNT Spam", yOffset, false, function(state)
+    if state then
+        startFeature("tntSpam", function(flag)
+            while flag.running do
+                if selectedTarget and selectedTarget.Character and selectedTarget.Character.PrimaryPart then
                     local root = selectedTarget.Character.PrimaryPart
                     if character and character.PrimaryPart then
                         pcall(function() character:PivotTo(root.CFrame + Vector3.new(0,2,0)) end)
                     end
                     local center = root.Position
-                    for x = -2,2 do
-                        for y = -2,2 do
-                            for z = -2,2 do
-                                if x==0 and y==0 and z==0 then continue end
-                                placeBlock("TNT", center + Vector3.new(x*4, y*4, z*4))
-                            end
-                        end
-                    end
-                    task.wait(0.05)
+                    for x=-2,2 do for y=-2,2 do for z=-2,2 do
+                        if x==0 and y==0 and z==0 then continue end
+                        placeBlock("TNT", center + Vector3.new(x*4,y*4,z*4))
+                    end end end
                 end
-            end)
-        else stopFeature("tntSpam") end
-    end,
-})
-
-TargetActions:Toggle({
-    Title = "Nuke Target",
-    Callback = function(state)
-        if state then
-            startFeature("nukeTarget", function(flag)
-                local radius = 20
-                while flag.running do
-                    if not selectedTarget then task.wait(0.5); continue end
-                    local allBlocks = getAllPlacedBlocks()
-                    if #allBlocks == 0 then task.wait(0.5); continue end
-                    local targetRoot = selectedTarget.Character and selectedTarget.Character.PrimaryPart
-                    if not targetRoot then task.wait(0.5); continue end
-                    local targetPos = targetRoot.Position
-                    local closest = nil
-                    for _, part in ipairs(allBlocks) do
-                        if (part.Position - targetPos).Magnitude <= radius then
-                            closest = part
-                            break
-                        end
-                    end
-                    if closest then
-                        if character and character.PrimaryPart then
-                            pcall(function() character:PivotTo(closest.CFrame) end)
-                        end
-                        local toDelete = {}
-                        for _, part in ipairs(allBlocks) do
-                            if (part.Position - closest.Position).Magnitude <= radius then
-                                table.insert(toDelete, part)
-                            end
-                        end
-                        for _, d in ipairs(toDelete) do
-                            task.spawn(function() destroyBlockPart(d) end)
-                        end
-                        task.wait(0.05)
-                    else
-                        task.wait(0.5)
-                    end
-                    task.wait(0.3)
-                end
-            end)
-        else stopFeature("nukeTarget") end
-    end,
-})
-
-TargetActions:Button({
-    Title = "Teleport to Target",
-    Callback = function()
-        if selectedTarget and selectedTarget.Character and selectedTarget.Character.PrimaryPart then
-            if character and character.PrimaryPart then
-                pcall(function() character:PivotTo(selectedTarget.Character.PrimaryPart.CFrame + Vector3.new(0,2,0)) end)
+                task.wait(0.05)
             end
-        end
-    end,
-})
+        end)
+    else stopFeature("tntSpam") end
+end); yOffset = yOffset + 32
 
--- MAIN TAB
-local MainTab = Window:Tab({ Title = "Main", Icon = "solar:globus-bold" })
-
-MainTab:Section({ Title = "Destroy All" }):Button({
-    Title = "🗑️ DESTROY ALL",
-    Color = Color3.fromRGB(220,20,20),
-    Callback = function()
-        destroyAllPlacedBlocks()
-    end,
-})
-
-MainTab:Button({
-    Title = "🧱 PLACE BLOCKS (Once)",
-    Callback = function()
-        local totalBlocks = 5000
-        local heightLayers = 1
-        local centerPos = character and character.PrimaryPart and character.PrimaryPart.Position or Vector3.new(0,2,0)
-        local blocksPerLayer = math.ceil(totalBlocks / heightLayers)
-        local gridSize = math.ceil(math.sqrt(blocksPerLayer))
-        local blockType = "Oak Planks"
-        local positions = {}
-        for layer = 0, heightLayers - 1 do
-            local count = 0
-            for x = -gridSize, gridSize do
-                for z = -gridSize, gridSize do
-                    if count >= blocksPerLayer then break end
-                    local posX = centerPos.X + (x * 4)
-                    local posZ = centerPos.Z + (z * 4)
-                    local posY = centerPos.Y + (layer * 4) + 2
-                    table.insert(positions, Vector3.new(posX, posY, posZ))
-                    count = count + 1
-                end
-                if count >= blocksPerLayer then break end
-            end
-        end
-        for _, pos in ipairs(positions) do
-            placeBlock(blockType, pos)
-        end
-        waitForAllPlacements()
-        WindUI:Notify({ Title = "Placed", Content = "All " .. totalBlocks .. " blocks sent." })
-    end,
-})
-
-MainTab:Toggle({
-    Title = "Fling All",
-    Callback = function(state)
-        if state then
-            startFeature("flingAll", function(flag)
-                while flag.running do
-                    for _, plr in ipairs(Players:GetPlayers()) do
-                        if plr ~= player then
-                            SkidFling(plr, flag)
-                            task.wait(0.8)
-                        end
-                    end
-                    task.wait(1)
-                end
-            end)
-        else stopFeature("flingAll") end
-    end,
-})
-
-MainTab:Toggle({
-    Title = "Cage All",
-    Callback = function(state)
-        if state then
-            startFeature("cageAll", function(flag)
-                while flag.running do
-                    for _, plr in ipairs(Players:GetPlayers()) do
-                        if plr ~= player then
-                            cagePlayer(plr)
-                            task.wait(0.01)
-                        end
-                    end
-                    task.wait(0.3)
-                end
-            end)
-        else stopFeature("cageAll") end
-    end,
-})
-
-MainTab:Toggle({
-    Title = "Nuke All",
-    Callback = function(state)
-        if state then
-            startFeature("nukeAll", function(flag)
-                local radius = 20
-                while flag.running do
-                    local allBlocks = getAllPlacedBlocks()
-                    if #allBlocks == 0 then task.wait(0.5); continue end
-                    for _, part in ipairs(allBlocks) do
-                        if not flag.running then break end
-                        if character and character.PrimaryPart then
-                            pcall(function() character:PivotTo(part.CFrame) end)
-                        end
-                        local toDelete = {}
-                        for _, other in ipairs(allBlocks) do
-                            if (other.Position - part.Position).Magnitude <= radius then
-                                table.insert(toDelete, other)
-                            end
-                        end
-                        for _, d in ipairs(toDelete) do
-                            task.spawn(function() destroyBlockPart(d) end)
-                        end
-                        task.wait(0.05)
-                    end
-                    task.wait(0.3)
-                end
-            end)
-        else stopFeature("nukeAll") end
-    end,
-})
-
--- ==================== ORBIT TAB ====================
-local OrbitTab = Window:Tab({ Title = "Orbit", Icon = "solar:star-bold" })
-local auraTarget = nil
-local auraDropdown = OrbitTab:Section({ Title = "Orbit Target" }):Dropdown({
-    Title = "Select Target", Values = {}, AllowNone = true,
-    Callback = function(value)
-        if value then
-            for _, plr in ipairs(Players:GetPlayers()) do
-                if plr.Name == value and plr ~= player then auraTarget = plr return end
-            end
-        else auraTarget = nil end
-    end,
-})
-refreshDropdown(auraDropdown)
-Players.PlayerAdded:Connect(function() refreshDropdown(auraDropdown) end)
-Players.PlayerRemoving:Connect(function(p)
-    if auraTarget == p then auraTarget = nil; auraDropdown:Select(nil) end
-    refreshDropdown(auraDropdown)
-end)
-
-local orbitSpeed = 0.3
-local orbitClearDist = 20
-local orbitRadius = 20
-local orbitMinHeight = -5
-local orbitMaxHeight = 10
-local orbitYOffset = 0
-local orbitAngle = 0
-
-OrbitTab:Toggle({
-    Title = "Orbit",
-    Callback = function(state)
-        if state then
-            startFeature("orbit", function(flag)
-                while flag.running do
-                    local target = auraTarget
-                    if target and target.Character and target.Character.PrimaryPart then
-                        local tpos = target.Character.PrimaryPart.Position
-                        local hPos = Vector3.new(math.cos(orbitAngle) * orbitRadius, 0, math.sin(orbitAngle) * orbitRadius)
-                        local yOffset = orbitYOffset
-                        local minH = orbitMinHeight
-                        local maxH = orbitMaxHeight
-                        local t = (math.sin(orbitAngle * 2) + 1) / 2
-                        local y = tpos.Y + yOffset + minH + (maxH - minH) * t
-                        local myPos = Vector3.new(tpos.X + hPos.X, y, tpos.Z + hPos.Z)
-
-                        if character and character.PrimaryPart then
-                            pcall(function() character:PivotTo(CFrame.new(myPos)) end)
-                        end
-                        task.spawn(function()
-                            for _, part in ipairs(getAllPlacedBlocks()) do
-                                if (part.Position - myPos).Magnitude <= orbitClearDist then
-                                    destroyBlockPart(part)
-                                end
-                            end
-                        end)
-                        orbitAngle = orbitAngle + orbitSpeed
-                    elseif character and character.PrimaryPart then
-                        local pos = character.PrimaryPart.Position
-                        task.spawn(function()
-                            for _, part in ipairs(getAllPlacedBlocks()) do
-                                if (part.Position - pos).Magnitude <= orbitClearDist then
-                                    destroyBlockPart(part)
-                                end
-                            end
-                        end)
-                    end
-                    task.wait()
-                end
-            end)
-        else
-            stopFeature("orbit")
-        end
-    end,
-})
-
-OrbitTab:Slider({ Title = "Speed", Step = 0.01, Value = { Min = 0.05, Max = 1, Default = 0.3 }, Callback = function(v) orbitSpeed = v end })
-OrbitTab:Slider({ Title = "Clear Dist", Step = 1, Value = { Min = 5, Max = 50, Default = 20 }, Callback = function(v) orbitClearDist = v end })
-OrbitTab:Slider({ Title = "Orbit Radius", Step = 1, Value = { Min = 5, Max = 50, Default = 20 }, Callback = function(v) orbitRadius = v end })
-OrbitTab:Slider({ Title = "Min Height", Step = 1, Value = { Min = -10, Max = 10, Default = -5 }, Callback = function(v) orbitMinHeight = v end })
-OrbitTab:Slider({ Title = "Max Height", Step = 1, Value = { Min = -10, Max = 20, Default = 10 }, Callback = function(v) orbitMaxHeight = v end })
-OrbitTab:Slider({ Title = "Y Offset", Step = 1, Value = { Min = -10, Max = 10, Default = 0 }, Callback = function(v) orbitYOffset = v end })
-
--- SPAMMER TAB (Radius 13) – follows target, throttled
-local SpammerTab = Window:Tab({ Title = "Spammer", Icon = "solar:layers-bold" })
+-- Spammer (r=13 sphere) – separate target selection
 local spamTarget = nil
-local spamDropdown = SpammerTab:Section({ Title = "Spammer Target" }):Dropdown({
-    Title = "Select Target", Values = {}, AllowNone = true,
-    Callback = function(value)
-        if value then
-            for _, plr in ipairs(Players:GetPlayers()) do
-                if plr.Name == value and plr ~= player then spamTarget = plr return end
-            end
-        else spamTarget = nil end
-    end,
-})
-refreshDropdown(spamDropdown)
-Players.PlayerAdded:Connect(function() refreshDropdown(spamDropdown) end)
-Players.PlayerRemoving:Connect(function(p)
-    if spamTarget == p then spamTarget = nil; spamDropdown:Select(nil) end
-    refreshDropdown(spamDropdown)
-end)
+local spamDropFrame = Instance.new("Frame", mainFrame)
+spamDropFrame.Size = UDim2.new(1,-10,0,28)
+spamDropFrame.Position = UDim2.new(0,5,0,yOffset)
+spamDropFrame.BackgroundColor3 = Color3.fromRGB(60,60,60)
+local spamLabel = Instance.new("TextLabel", spamDropFrame)
+spamLabel.Size = UDim2.new(1,0,1,0)
+spamLabel.Text = "Spam Target: None"
+spamLabel.TextColor3 = Color3.fromRGB(255,255,255)
+spamLabel.Font = Enum.Font.SourceSans
+spamLabel.BackgroundTransparency = 1
+yOffset = yOffset + 32
 
-local sphereOffsets = {}
-for x = -13,13 do
-    for y = -13,13 do
-        for z = -13,13 do
-            if math.sqrt(x*x + y*y + z*z) <= 13 then
-                table.insert(sphereOffsets, Vector3.new(x, y, z))
-            end
+local spamList = Instance.new("Frame", mainFrame)
+spamList.Size = UDim2.new(1,-10,0,150)
+spamList.Position = UDim2.new(0,5,0,yOffset)
+spamList.BackgroundColor3 = Color3.fromRGB(50,50,50)
+spamList.Visible = false
+spamDropFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        spamList.Visible = not spamList.Visible
+        if spamList.Visible then
+            refreshDropdown(spamList, function(plr)
+                spamTarget = plr
+                spamLabel.Text = "Spam Target: " .. plr.Name
+                spamList.Visible = false
+            end)
         end
     end
-end
+end)
+yOffset = yOffset + 155
 
-SpammerTab:Toggle({
-    Title = "Sphere Fill (r=13)",
-    Callback = function(state)
-        if state then
-            startFeature("spammer", function(flag)
-                while flag.running do
-                    local target = spamTarget
-                    if target and target.Character and target.Character.PrimaryPart then
-                        local center = target.Character.PrimaryPart.Position
-                        for _, offset in ipairs(sphereOffsets) do
-                            if not flag.running then return end
-                            placeBlock("Glass", center + offset)
-                        end
-                    else
-                        task.wait(0.5)
+local sphereOffsets = {}
+for x=-13,13 do for y=-13,13 do for z=-13,13 do
+    if math.sqrt(x*x+y*y+z*z) <= 13 then table.insert(sphereOffsets, Vector3.new(x,y,z)) end
+end end end
+
+createToggle("Sphere Fill (r=13)", yOffset, false, function(state)
+    if state then
+        startFeature("spammer", function(flag)
+            while flag.running do
+                if spamTarget and spamTarget.Character and spamTarget.Character.PrimaryPart then
+                    local center = spamTarget.Character.PrimaryPart.Position
+                    for _, off in ipairs(sphereOffsets) do
+                        if not flag.running then return end
+                        placeBlock("Glass", center + off)
                     end
-                end
+                else task.wait(0.5) end
+            end
+        end)
+    else stopFeature("spammer") end
+end); yOffset = yOffset + 32
+
+-- Orbit
+local orbitTarget = nil
+local orbitDropFrame = Instance.new("Frame", mainFrame)
+orbitDropFrame.Size = UDim2.new(1,-10,0,28)
+orbitDropFrame.Position = UDim2.new(0,5,0,yOffset)
+orbitDropFrame.BackgroundColor3 = Color3.fromRGB(60,60,60)
+local orbitLabel = Instance.new("TextLabel", orbitDropFrame)
+orbitLabel.Size = UDim2.new(1,0,1,0)
+orbitLabel.Text = "Orbit Target: None"
+orbitLabel.TextColor3 = Color3.fromRGB(255,255,255)
+orbitLabel.Font = Enum.Font.SourceSans
+orbitLabel.BackgroundTransparency = 1
+yOffset = yOffset + 32
+
+local orbitList = Instance.new("Frame", mainFrame)
+orbitList.Size = UDim2.new(1,-10,0,150)
+orbitList.Position = UDim2.new(0,5,0,yOffset)
+orbitList.BackgroundColor3 = Color3.fromRGB(50,50,50)
+orbitList.Visible = false
+orbitDropFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        orbitList.Visible = not orbitList.Visible
+        if orbitList.Visible then
+            refreshDropdown(orbitList, function(plr)
+                orbitTarget = plr
+                orbitLabel.Text = "Orbit Target: " .. plr.Name
+                orbitList.Visible = false
             end)
-        else
-            stopFeature("spammer")
         end
-    end,
-})
+    end
+end)
+yOffset = yOffset + 155
 
--- LOCAL PLAYER TAB
-local LocalTab = Window:Tab({ Title = "Local", Icon = "solar:user-speak-bold" })
-LocalTab:Slider({ Title = "WalkSpeed", Step = 1, Value = { Min = 16, Max = 200, Default = 16 }, Callback = function(v)
-    if character and character:FindFirstChildOfClass("Humanoid") then character:FindFirstChildOfClass("Humanoid").WalkSpeed = v end
-end })
-LocalTab:Slider({ Title = "JumpPower", Step = 1, Value = { Min = 50, Max = 300, Default = 50 }, Callback = function(v)
-    if character and character:FindFirstChildOfClass("Humanoid") then character:FindFirstChildOfClass("Humanoid").JumpPower = v end
-end })
-LocalTab:Slider({ Title = "HipHeight", Step = 0.1, Value = { Min = 0, Max = 5, Default = 0 }, Callback = function(v)
-    if character and character:FindFirstChildOfClass("Humanoid") then character:FindFirstChildOfClass("Humanoid").HipHeight = v end
-end })
-LocalTab:Slider({ Title = "Gravity", Step = 0.01, Value = { Min = 0, Max = 196.2, Default = 196.2 }, Callback = function(v) workspace.Gravity = v end })
-
-LocalTab:Toggle({
-    Title = "Fly",
-    Callback = function(state)
-        if state then
-            if character and character.PrimaryPart and character:FindFirstChildOfClass("Humanoid") then
-                local hum = character:FindFirstChildOfClass("Humanoid")
-                hum.PlatformStand = true
-                local gyro = Instance.new("BodyGyro", character.PrimaryPart)
-                gyro.CFrame = character.PrimaryPart.CFrame; gyro.MaxTorque = Vector3.new(9e9,9e9,9e9)
-                local vel = Instance.new("BodyVelocity", character.PrimaryPart)
-                vel.MaxForce = Vector3.new(9e9,9e9,9e9)
-                startFeature("fly", function(flag)
-                    local conn = RunService.Heartbeat:Connect(function()
-                        if not flag.running then conn:Disconnect(); return end
-                        gyro.CFrame = workspace.CurrentCamera.CFrame
-                        local dir = Vector3.zero
-                        if UIS:IsKeyDown(Enum.KeyCode.W) then dir += gyro.CFrame.LookVector end
-                        if UIS:IsKeyDown(Enum.KeyCode.S) then dir -= gyro.CFrame.LookVector end
-                        if UIS:IsKeyDown(Enum.KeyCode.A) then dir -= gyro.CFrame.RightVector end
-                        if UIS:IsKeyDown(Enum.KeyCode.D) then dir += gyro.CFrame.RightVector end
-                        if UIS:IsKeyDown(Enum.KeyCode.Space) then dir += Vector3.new(0,1,0) end
-                        if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then dir -= Vector3.new(0,1,0) end
-                        vel.Velocity = dir * 50
+local orbitAngle = 0
+createToggle("Orbit", yOffset, false, function(state)
+    if state then
+        startFeature("orbit", function(flag)
+            while flag.running do
+                if orbitTarget and orbitTarget.Character and orbitTarget.Character.PrimaryPart then
+                    local tpos = orbitTarget.Character.PrimaryPart.Position
+                    local angle = orbitAngle
+                    local h = Vector3.new(math.cos(angle)*20, 0, math.sin(angle)*20)
+                    local y = tpos.Y + 2
+                    local myPos = tpos + h + Vector3.new(0,y,0)
+                    if character and character.PrimaryPart then
+                        pcall(function() character:PivotTo(CFrame.new(myPos)) end)
+                    end
+                    -- destroy nearby blocks
+                    task.spawn(function()
+                        for _, part in ipairs(getAllBlocks()) do
+                            if (part.Position - myPos).Magnitude <= 20 then
+                                destroyBlock(part)
+                            end
+                        end
                     end)
-                    while flag.running do task.wait() end
-                    conn:Disconnect()
-                    gyro:Destroy(); vel:Destroy()
-                    hum.PlatformStand = false
-                end)
+                    orbitAngle = orbitAngle + 0.3
+                elseif character and character.PrimaryPart then
+                    local pos = character.PrimaryPart.Position
+                    task.spawn(function()
+                        for _, part in ipairs(getAllBlocks()) do
+                            if (part.Position - pos).Magnitude <= 20 then
+                                destroyBlock(part)
+                            end
+                        end
+                    end)
+                end
+                task.wait()
             end
-        else stopFeature("fly") end
-    end,
-})
+        end)
+    else stopFeature("orbit") end
+end); yOffset = yOffset + 32
 
-LocalTab:Toggle({
-    Title = "Noclip",
-    Callback = function(state)
-        if state then
-            local function apply()
-                if character then for _, p in ipairs(character:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide = false end end end
-            end
-            apply()
-            local conn = RunService.Stepped:Connect(apply)
-            startFeature("noclip", function(flag)
-                while flag.running do task.wait() end
-                conn:Disconnect()
-                if character then for _, p in ipairs(character:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide = true end end end
-            end)
-        else stopFeature("noclip") end
-    end,
-})
+createButton("STOP ALL", yOffset, function()
+    for name in pairs(activeFeatures) do stopFeature(name) end
+end)
 
--- VISUALS TAB
-local VisualsTab = Window:Tab({ Title = "Visuals", Icon = "solar:eye-bold" })
-VisualsTab:Toggle({
-    Title = "Fullbright",
-    Callback = function(state)
-        Lighting.Brightness = state and 2 or 1
-        Lighting.ClockTime = 14
-        Lighting.FogEnd = 100000
-        Lighting.GlobalShadows = not state
-    end,
-})
-VisualsTab:Toggle({
-    Title = "Player ESP",
-    Callback = function(state)
-        local espFolder = workspace:FindFirstChild("ESP_Folder") or Instance.new("Folder", workspace)
-        espFolder.Name = "ESP_Folder"
-        if not state then espFolder:ClearAllChildren(); return end
-        local function addESP(plr)
-            if plr == player then return end
-            local function onChar(char)
-                local hl = Instance.new("Highlight")
-                hl.FillColor = Color3.fromRGB(255,0,0)
-                hl.OutlineColor = Color3.fromRGB(255,255,255)
-                hl.FillTransparency = 0.5
-                hl.Adornee = char
-                hl.Parent = espFolder
-            end
-            if plr.Character then onChar(plr.Character) end
-            plr.CharacterAdded:Connect(onChar)
-        end
-        for _, plr in ipairs(Players:GetPlayers()) do addESP(plr) end
-        Players.PlayerAdded:Connect(addESP)
-    end,
-})
-VisualsTab:Toggle({
-    Title = "Wireframe",
-    Callback = function(state)
-        for _, obj in ipairs(workspace:GetDescendants()) do
-            if obj:IsA("BasePart") then
-                pcall(function() obj.Material = state and Enum.Material.Wireframe or Enum.Material.Plastic end)
-            end
-        end
-    end,
-})
-
--- STOP ALL
-Window:Button({
-    Title = "STOP ALL",
-    Color = Color3.fromRGB(255,0,0),
-    Callback = function()
-        for name in pairs(activeFeatures) do stopFeature(name) end
-        WindUI:Notify({ Title = "Stopped", Content = "All tasks deactivated." })
-    end,
-})
-
-WindUI:Notify({ Title = "Build Exploit Pack", Content = "Fully loaded! Remotes: Place & Destroy." })
-print("Script loaded successfully!")
+mainFrame.Size = UDim2.new(0, 250, 0, yOffset + 35)
