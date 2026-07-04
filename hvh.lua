@@ -1,41 +1,35 @@
---// Roblox Rivals HvH Script (Rayfield UI)
---// Features: Aimbot (camera + silent raycast), FOV circle (outline), Triggerbot, Hitbox expander, Bunnyhop, ESP (Box/Name/Health/Distance), Anti-Flash, Anti-Smoke, Controller aim assist.
---// Silent aim works by hooking the weapon's FireServer remote – if the game's remote name differs, change line ~130.
---// Controller aim moves mouse relative when right stick is used (only if `Use Controller` is enabled).
---// Ensure your executor supports Drawing, hookfunction, getnilinstances, mousemoverel, etc.
+--// BloxStrike HvH Script – WindUI
+--// Features: Aimbot (camera & silent raycast), FOV circle (outline), Triggerbot, Hitbox expander,
+--//           Bunnyhop, ESP (Box/Name/Health/Distance), Anti‑Flash, Anti‑Smoke, Controller aim.
+--// Silent aim hooks the weapon remote – adjust the remote name (line ~130) if needed.
+--// All exploits functions (mouse1click, mousemoverel) are checked before use.
 
--- Load Rayfield UI library
-local Rayfield = loadstring(game:HttpGet("https://raw.githubusercontent.com/twistedk1d/BloxStrike/refs/heads/main/Source/UI/source.lua"))()
-
--- Window
-local Window = Rayfield:CreateWindow({
-    Name = "Rivals HvH | Premium",
-    Icon = 0,
-    LoadingTitle = "Loading HvH...",
-    LoadingSubtitle = "by Sparky9971",
-    Theme = "Amethyst",
-    ToggleUIKeybind = Enum.KeyCode.RightShift,
-    DisableRayfieldPrompts = false,
-    DisableBuildWarnings = false,
-    ConfigurationSaving = {
-        Enabled = true,
-        FolderName = "RivalsHvH",
-        FileName = "Config"
-    }
-})
+local WindUI = nil
+local function loadWindUI()
+    local ok, result = pcall(function()
+        if game:GetService("RunService"):IsStudio() then
+            return require(game:GetService("ReplicatedStorage"):WaitForChild("WindUI"):WaitForChild("Init"))
+        else
+            return loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
+        end
+    end)
+    if ok then WindUI = result end
+end
+loadWindUI()
+if not WindUI then return end
 
 -- Services & Globals
-local RS = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
-local UserInputService = game:GetService("UserInputService")
 local Camera = Workspace.CurrentCamera
-local LocalPlayer = Players.LocalPlayer
 local Lighting = game:GetService("Lighting")
+local LocalPlayer = Players.LocalPlayer
+local RS = game:GetService("ReplicatedStorage")
 local CharactersFolder = Workspace:WaitForChild("Characters", 10)
 
--- Character / team helpers
+-- Team helpers (BloxStrike structure)
 local function getTFolder() return CharactersFolder:FindFirstChild("Terrorists") end
 local function getCTFolder() return CharactersFolder:FindFirstChild("Counter-Terrorists") end
 local function isAlive()
@@ -49,9 +43,13 @@ local function getEnemyFolder()
     if ct and ct:FindFirstChild(LocalPlayer.Name) then return t end
     return nil
 end
+local function teamCheck(plr)
+    local enemyFolder = getEnemyFolder()
+    return enemyFolder and plr.Character and plr.Character.Parent == enemyFolder
+end
 
 -- Features state
-local Aimbot = {Enabled = false, Silent = true, FOV = 200, Smoothness = 0.1, HitPart = "Head", VisibleCheck = true, TeamCheck = true}
+local Aimbot = {Enabled = false, Silent = true, FOV = 200, Smoothness = 0.1, HitPart = "Head", VisibleCheck = true}
 local Triggerbot = {Enabled = false, Delay = 0}
 local Hitbox = {Enabled = false, Size = 3}
 local ESP = {Enabled = false, Box = true, Name = true, HealthBar = true, Distance = true}
@@ -62,20 +60,32 @@ local UseController = false
 local ControllerSensitivity = 0.5
 
 -- Drawing objects
+local Drawing = nil
+pcall(function() Drawing = loadstring(game:HttpGet("https://raw.githubusercontent.com/Insei/PenisMan/refs/heads/main/DrawingLib.lua"))() end)
+if not Drawing then pcall(function() Drawing = { new = function() return {Visible = false} end } end) end
+
 local FOVCircle = Drawing.new("Circle")
 FOVCircle.Position = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
 FOVCircle.Radius = Aimbot.FOV
-FOVCircle.Filled = false          -- outline only
+FOVCircle.Filled = false
 FOVCircle.Color = Color3.fromRGB(255, 255, 255)
 FOVCircle.Visible = false
 FOVCircle.Thickness = 1
 
--- Silent aim target storage
+-- Silent aim target
 local SilentAimTarget = nil
 
 -- =============================================
---  AIMBOT & FOV
+--  AIMBOT
 -- =============================================
+local function isVisible(part)
+    local origin = Camera.CFrame.Position
+    local dir = (part.Position - origin).Unit * 1000
+    local ray = Ray.new(origin, dir)
+    local hit = Workspace:FindPartOnRay(ray, LocalPlayer.Character, false, true)
+    return hit and hit:IsDescendantOf(part.Parent)
+end
+
 local function getClosestEnemy()
     local closest = nil
     local closestDist = Aimbot.FOV
@@ -103,24 +113,15 @@ local function getClosestEnemy()
     return closest
 end
 
-local function isVisible(part)
-    local origin = Camera.CFrame.Position
-    local dir = (part.Position - origin).Unit * 1000
-    local ray = Ray.new(origin, dir)
-    local hit = Workspace:FindPartOnRay(ray, LocalPlayer.Character, false, true)
-    return hit and hit:IsDescendantOf(part.Parent)
-end
-
--- Aim key (right mouse)
+-- Aim key (right mouse button)
 local isAiming = false
-UserInputService.InputBegan:Connect(function(input)
+UIS.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton2 then isAiming = true end
 end)
-UserInputService.InputEnded:Connect(function(input)
+UIS.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton2 then isAiming = false end
 end)
 
--- Camera aimbot (non‑silent) and silent aim targeting
 RunService.RenderStepped:Connect(function()
     -- FOV circle
     if Aimbot.Enabled then
@@ -140,17 +141,15 @@ RunService.RenderStepped:Connect(function()
     SilentAimTarget = (Aimbot.Silent and target) or nil
 
     if not Aimbot.Silent and isAiming and target then
-        -- move mouse smoothly toward target
         local headPos = Camera:WorldToViewportPoint(target.Position)
-        local mousePos = UserInputService:GetMouseLocation()
+        local mousePos = UIS:GetMouseLocation()
         local moveX = (headPos.X - mousePos.X) / (Aimbot.Smoothness * 5)
         local moveY = (headPos.Y - mousePos.Y) / (Aimbot.Smoothness * 5)
         if mousemoverel then mousemoverel(moveX, moveY) end
     end
 end)
 
--- Silent aim remote hook
--- Replace "FireBullet" with the actual remote name from Roblox Rivals (use Dex Explorer)
+-- Silent aim remote hook (change "FireBullet" if needed)
 local function hookSilentAim()
     local remote = nil
     local remotesFolder = RS:FindFirstChild("Remotes") or RS
@@ -160,7 +159,7 @@ local function hookSilentAim()
             local old = hookfunction(remote.FireServer, function(self, ...)
                 local args = {...}
                 if SilentAimTarget and Aimbot.Enabled and Aimbot.Silent then
-                    args[1] = SilentAimTarget.Position   -- first arg is assumed mouse position
+                    args[1] = SilentAimTarget.Position
                 end
                 return old(self, unpack(args))
             end)
@@ -233,7 +232,7 @@ end)
 --  BUNNY HOP
 -- =============================================
 RunService.RenderStepped:Connect(function()
-    if Bhop and UserInputService:IsKeyDown(Enum.KeyCode.Space) and isAlive() then
+    if Bhop and UIS:IsKeyDown(Enum.KeyCode.Space) and isAlive() then
         local char = LocalPlayer.Character
         if char then
             local hum = char:FindFirstChildOfClass("Humanoid")
@@ -312,7 +311,6 @@ RunService.RenderStepped:Connect(function()
             end
         end
     end
-    -- Cleanup dead enemies
     for enemy, esp in pairs(espCache) do
         if not aliveSet[enemy] then
             for _, d in pairs(esp) do d:Remove() end
@@ -348,87 +346,85 @@ task.spawn(function()
 end)
 
 -- =============================================
---  CONTROLLER AIM ASSIST
+--  CONTROLLER AIM
 -- =============================================
-UserInputService.InputChanged:Connect(function(input)
+UIS.InputChanged:Connect(function(input)
     if UseController and (input.UserInputType == Enum.UserInputType.Gamepad1 or input.UserInputType == Enum.UserInputType.Gamepad2) then
         if input.KeyCode == Enum.KeyCode.Thumbstick2 then
             local delta = input.Delta
             local sens = ControllerSensitivity * 5
-            if mousemoverel then
-                mousemoverel(math.floor(delta.X * sens), math.floor(delta.Y * -sens))
-            end
+            if mousemoverel then mousemoverel(math.floor(delta.X * sens), math.floor(delta.Y * -sens)) end
         end
     end
 end)
 
 -- =============================================
---  UI CREATION
+--  WINDUI INTERFACE
 -- =============================================
-local Tab_Combat  = Window:CreateTab("Combat", "crosshair")
-local Tab_Visuals = Window:CreateTab("Visuals", "eye")
-local Tab_Misc    = Window:CreateTab("Misc", "settings")
+local Window = WindUI:CreateWindow({
+    Title = "BloxStrike HvH",
+    Folder = "bloxstrike_hvh",
+    Icon = "solar:target-bold",
+    OpenButton = { Title = "Open HvH", Enabled = true, Scale = 0.5 },
+})
 
--- ---- Aimbot Section ----
-Tab_Combat:CreateSection("Aimbot")
-Tab_Combat:CreateToggle({Name = "Enable Aimbot", CurrentValue = false, Callback = function(v) Aimbot.Enabled = v end})
-Tab_Combat:CreateToggle({Name = "Silent Aim (Raycast)", CurrentValue = true, Callback = function(v) Aimbot.Silent = v end})
-Tab_Combat:CreateToggle({Name = "Visibility Check", CurrentValue = true, Callback = function(v) Aimbot.VisibleCheck = v end})
-Tab_Combat:CreateToggle({Name = "Show FOV Circle", CurrentValue = false, Callback = function(v) -- FOV circle is always shown when aimbot enabled in this script, but we can hide via this toggle
-    -- We'll just use it as a master toggle for the circle visibility, independent of aimbot on/off
-end})
-Tab_Combat:CreateSlider({Name = "FOV", Range = {10, 500}, Increment = 10, Suffix = "px", CurrentValue = 200, Callback = function(v) Aimbot.FOV = v end})
-Tab_Combat:CreateSlider({Name = "Smoothness", Range = {1, 10}, Increment = 1, Suffix = " (lower = faster)", CurrentValue = 3, Callback = function(v) Aimbot.Smoothness = v/10 end})  -- 0.1..1
-Tab_Combat:CreateDropdown({Name = "Hit Part", Options = {"Head", "UpperTorso", "HumanoidRootPart"}, CurrentOption = {"Head"}, Callback = function(opt) Aimbot.HitPart = opt[1] end})
+-- Tabs
+local Tab_Combat  = Window:Tab({ Title = "Combat", Icon = "solar:target-bold" })
+local Tab_Visuals = Window:Tab({ Title = "Visuals", Icon = "solar:eye-bold" })
+local Tab_Misc    = Window:Tab({ Title = "Misc", Icon = "solar:settings-bold" })
 
--- ---- Triggerbot Section ----
-Tab_Combat:CreateSection("Triggerbot")
-Tab_Combat:CreateToggle({Name = "Enable Triggerbot", CurrentValue = false, Callback = function(v) Triggerbot.Enabled = v end})
-Tab_Combat:CreateSlider({Name = "Shot Delay", Range = {0, 500}, Increment = 10, Suffix = "ms", CurrentValue = 0, Callback = function(v) Triggerbot.Delay = v end})
+-- ---- Combat Section ----
+Tab_Combat:Section({ Title = "Aimbot" })
+    :Toggle({ Title = "Enable Aimbot", Value = false, Callback = function(v) Aimbot.Enabled = v end })
+    :Toggle({ Title = "Silent Aim (Raycast)", Value = true, Callback = function(v) Aimbot.Silent = v end })
+    :Toggle({ Title = "Visibility Check", Value = true, Callback = function(v) Aimbot.VisibleCheck = v end })
+    :Slider({ Title = "FOV", Step = 10, Value = { Min = 10, Max = 500, Default = 200 }, Callback = function(v) Aimbot.FOV = v end })
+    :Slider({ Title = "Smoothness", Step = 0.1, Value = { Min = 0.1, Max = 1, Default = 0.1 }, Callback = function(v) Aimbot.Smoothness = v end })
+    :Dropdown({ Title = "Hit Part", Values = { "Head", "UpperTorso", "HumanoidRootPart" }, Value = "Head", Callback = function(v) Aimbot.HitPart = v end })
 
--- ---- Hitbox Expander ----
-Tab_Combat:CreateSection("Hitbox Expander")
-Tab_Combat:CreateToggle({Name = "Enable Hitbox", CurrentValue = false, Callback = function(v) Hitbox.Enabled = v end})
-Tab_Combat:CreateSlider({Name = "Hitbox Size", Range = {1, 3}, Increment = 0.1, Suffix = " Studs", CurrentValue = 3, Callback = function(v) Hitbox.Size = v end})
+Tab_Combat:Section({ Title = "Triggerbot" })
+    :Toggle({ Title = "Enable Triggerbot", Value = false, Callback = function(v) Triggerbot.Enabled = v end })
+    :Slider({ Title = "Shot Delay (ms)", Step = 10, Value = { Min = 0, Max = 500, Default = 0 }, Callback = function(v) Triggerbot.Delay = v end })
 
--- ---- Movement ----
-Tab_Combat:CreateSection("Movement")
-Tab_Combat:CreateToggle({Name = "Bunny Hop (Hold Space)", CurrentValue = false, Callback = function(v) Bhop = v end})
+Tab_Combat:Section({ Title = "Hitbox Expander" })
+    :Toggle({ Title = "Enable Hitbox", Value = false, Callback = function(v) Hitbox.Enabled = v end })
+    :Slider({ Title = "Hitbox Size", Step = 0.1, Value = { Min = 1, Max = 3, Default = 3 }, Callback = function(v) Hitbox.Size = v end })
 
--- ---- Controller ----
-Tab_Combat:CreateSection("Controller")
-Tab_Combat:CreateToggle({Name = "Use Controller Aim (Right Stick)", CurrentValue = false, Callback = function(v) UseController = v end})
-Tab_Combat:CreateSlider({Name = "Controller Sensitivity", Range = {0.1, 2}, Increment = 0.1, CurrentValue = 0.5, Callback = function(v) ControllerSensitivity = v end})
+Tab_Combat:Section({ Title = "Movement" })
+    :Toggle({ Title = "Bunny Hop (Hold Space)", Value = false, Callback = function(v) Bhop = v end })
 
--- ---- Visuals - ESP ----
-Tab_Visuals:CreateSection("ESP")
-Tab_Visuals:CreateToggle({Name = "Enable ESP", CurrentValue = false, Callback = function(v) ESP.Enabled = v end})
-Tab_Visuals:CreateToggle({Name = "Box", CurrentValue = true, Callback = function(v) ESP.Box = v end})
-Tab_Visuals:CreateToggle({Name = "Name", CurrentValue = true, Callback = function(v) ESP.Name = v end})
-Tab_Visuals:CreateToggle({Name = "Health Bar", CurrentValue = true, Callback = function(v) ESP.HealthBar = v end})
-Tab_Visuals:CreateToggle({Name = "Distance", CurrentValue = true, Callback = function(v) ESP.Distance = v end})
+Tab_Combat:Section({ Title = "Controller" })
+    :Toggle({ Title = "Use Controller Aim (Right Stick)", Value = false, Callback = function(v) UseController = v end })
+    :Slider({ Title = "Controller Sensitivity", Step = 0.1, Value = { Min = 0.1, Max = 2, Default = 0.5 }, Callback = function(v) ControllerSensitivity = v end })
 
--- ---- Visuals - World ----
-Tab_Visuals:CreateSection("World Effects")
-Tab_Visuals:CreateToggle({Name = "Anti-Flashbang", CurrentValue = false, Callback = function(v) AntiFlash = v end})
-Tab_Visuals:CreateToggle({Name = "Anti-Smoke", CurrentValue = false, Callback = function(v) AntiSmoke = v end})
+-- ---- Visuals Tab ----
+Tab_Visuals:Section({ Title = "ESP" })
+    :Toggle({ Title = "Enable ESP", Value = false, Callback = function(v) ESP.Enabled = v end })
+    :Toggle({ Title = "Box", Value = true, Callback = function(v) ESP.Box = v end })
+    :Toggle({ Title = "Name", Value = true, Callback = function(v) ESP.Name = v end })
+    :Toggle({ Title = "Health Bar", Value = true, Callback = function(v) ESP.HealthBar = v end })
+    :Toggle({ Title = "Distance", Value = true, Callback = function(v) ESP.Distance = v end })
 
--- ---- Misc ----
-Tab_Misc:CreateSection("Other")
-Tab_Misc:CreateButton({Name = "Unload All Features", Callback = function()
-    Aimbot.Enabled = false
-    Triggerbot.Enabled = false
-    Hitbox.Enabled = false
-    ESP.Enabled = false
-    Bhop = false
-    AntiFlash = false
-    AntiSmoke = false
-    UseController = false
-    Rayfield:Notify({Title = "HvH", Content = "All features disabled.", Duration = 3})
-end})
+Tab_Visuals:Section({ Title = "World Effects" })
+    :Toggle({ Title = "Anti-Flashbang", Value = false, Callback = function(v) AntiFlash = v end })
+    :Toggle({ Title = "Anti-Smoke", Value = false, Callback = function(v) AntiSmoke = v end })
 
--- Load saved configuration (optional, Rayfield handles via ConfigurationSaving)
-Rayfield:LoadConfiguration()
+-- ---- Misc Tab ----
+Tab_Misc:Button({
+    Title = "UNLOAD ALL",
+    Color = Color3.fromRGB(255,0,0),
+    Callback = function()
+        Aimbot.Enabled = false
+        Triggerbot.Enabled = false
+        Hitbox.Enabled = false
+        ESP.Enabled = false
+        Bhop = false
+        AntiFlash = false
+        AntiSmoke = false
+        UseController = false
+        WindUI:Notify({ Title = "HvH", Content = "All features disabled." })
+    end,
+})
 
-Rayfield:Notify({Title = "Rivals HvH", Content = "Loaded! Silent aim remote may need manual adjustment.", Duration = 5})
-print("Roblox Rivals HvH (Rayfield) ready. Silent aim remote name: FireBullet (change if needed).")
+WindUI:Notify({ Title = "BloxStrike HvH", Content = "Loaded! Adjust remote name for Silent Aim if needed." })
+print("BloxStrike HvH (WindUI) ready. Remote: FireBullet (change if different).")
