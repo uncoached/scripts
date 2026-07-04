@@ -1,7 +1,30 @@
--- Build Exploit Pack – Adapted for game using PlaceBlockEvent & DestroyBlockEven
+-- Build Exploit Pack – Robust with fallbacks, error handling, and debug info
 -- Place: PlaceBlockEvent:FireServer(pos, blockType, rotation, uuid, "Block")
--- Destroy: DestroyBlockEven:FireServer(tempPart, uuid)
+-- Destroy: DestroyBlockEven:FireServer(tempPart, blockUUID)   (block name is its UUID)
 
+-- ===== Compatibility Fallbacks =====
+if not task then task = { wait = wait, spawn = function(f) coroutine.wrap(f)() end } end
+if not typeof then typeof = type end
+
+-- ===== Debug Helper (creates a ScreenGui if UI fails) =====
+local function showError(title, msg)
+    pcall(function()
+        local gui = Instance.new("ScreenGui")
+        gui.Parent = game:GetService("CoreGui")
+        local frame = Instance.new("Frame", gui)
+        frame.Size = UDim2.new(0, 300, 0, 100)
+        frame.Position = UDim2.new(0.5, -150, 0.5, -50)
+        frame.BackgroundColor3 = Color3.fromRGB(40,40,40)
+        local label = Instance.new("TextLabel", frame)
+        label.Size = UDim2.new(1,0,1,0)
+        label.Text = title .. "\n" .. msg
+        label.TextColor3 = Color3.fromRGB(255,100,100)
+        label.TextScaled = true
+        label.BackgroundTransparency = 1
+    end)
+end
+
+-- ===== WindUI Load =====
 local WindUI = nil
 local loadSuccess, loadErr = pcall(function()
     if game:GetService("RunService"):IsStudio() then
@@ -11,23 +34,34 @@ local loadSuccess, loadErr = pcall(function()
     end
 end)
 if not WindUI then
-    warn("WindUI failed to load: ", loadErr or "unknown error")
-    pcall(function()
-        game:GetService("StarterGui"):SetCore("SendNotification", {
-            Title = "Error",
-            Text = "WindUI not loaded: " .. tostring(loadErr),
-            Duration = 5
-        })
-    end)
+    warn("WindUI failed: " .. tostring(loadErr))
+    showError("UI Error", "WindUI not loaded.\n" .. tostring(loadErr))
     return
 end
 
+-- ===== Services & Player =====
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local Lighting = game:GetService("Lighting")
 local HttpService = game:GetService("HttpService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local player = Players.LocalPlayer
+
+-- ===== Remotes (WaitForChild will block until found; if missing, script hangs) =====
+local placeEvent, destroyEvent
+pcall(function()
+    placeEvent = ReplicatedStorage:WaitForChild("PlaceBlockEvent")
+    destroyEvent = ReplicatedStorage:WaitForChild("DestroyBlockEven")   -- exact name from spy
+end)
+if not placeEvent then
+    showError("Remote Error", "PlaceBlockEvent not found.")
+    return
+end
+if not destroyEvent then
+    showError("Remote Error", "DestroyBlockEven not found.")
+    return
+end
 
 -- Character reference
 local character = nil
@@ -37,11 +71,6 @@ local function onCharAdded(char)
 end
 if player.Character then onCharAdded(player.Character) end
 player.CharacterAdded:Connect(onCharAdded)
-
--- Remotes
-local replicatedStorage = game:GetService("ReplicatedStorage")
-local placeEvent = replicatedStorage:WaitForChild("PlaceBlockEvent")
-local destroyEvent = replicatedStorage:WaitForChild("DestroyBlockEven")  -- note exact name
 
 -- Fling globals
 getgenv().OldPos = nil
@@ -106,14 +135,10 @@ end
 -- Destroy a placed block part using DestroyBlockEven
 local function destroyBlockPart(part)
     if not part or not part.Parent then return end
-    -- Attempt to retrieve UUID from attribute or name
-    local uuid = part:GetAttribute("UUID")
-    if not uuid or uuid == "" then
-        uuid = part.Name  -- fallback: many blocks have their name set to the UUID
-    end
+    -- The block's Name is its UUID (e.g., "26b8ff59-c1f6-442a-...")
+    local uuid = part.Name
     if not uuid or uuid == "" then return end
 
-    -- Create a temporary part (required by the remote)
     local tempPart = Instance.new("Part")
     tempPart.Parent = nil
     pcall(function()
@@ -138,9 +163,14 @@ end
 
 -- Destroy all placed blocks
 local function destroyAllPlacedBlocks()
+    local count = 0
     for _, part in ipairs(getAllPlacedBlocks()) do
-        task.spawn(function() destroyBlockPart(part) end)
+        task.spawn(function()
+            destroyBlockPart(part)
+            count = count + 1
+        end)
     end
+    WindUI:Notify({ Title = "Destroy", Content = "Queued destruction for " .. #getAllPlacedBlocks() .. " blocks." })
 end
 
 -- Instant cage (teleports local player, places 124 blocks via throttler)
@@ -258,13 +288,20 @@ local function SkidFling(TargetPlayer, flag)
     end
 end
 
--- ==================== UI ====================
-local Window = WindUI:CreateWindow({
-    Title = "Build Exploit Pack",
-    Folder = "BuildExploit",
-    Icon = "solar:hammer-bold",
-    OpenButton = { Title = "Open", Enabled = true },
-})
+-- ==================== UI (with error catch) ====================
+local Window
+pcall(function()
+    Window = WindUI:CreateWindow({
+        Title = "Build Exploit Pack",
+        Folder = "BuildExploit",
+        Icon = "solar:hammer-bold",
+        OpenButton = { Title = "Open", Enabled = true },
+    })
+end)
+if not Window then
+    showError("UI Error", "Failed to create WindUI window.")
+    return
+end
 
 local function refreshDropdown(dropdown)
     local names = {}
@@ -320,7 +357,7 @@ TargetActions:Toggle({
                 while flag.running do
                     if not selectedTarget then task.wait(1); continue end
                     cagePlayer(selectedTarget)
-                    task.wait(0.01)  -- rapid follow
+                    task.wait(0.01)
                 end
             end)
         else stopFeature("cageTarget") end
@@ -419,7 +456,6 @@ MainTab:Section({ Title = "Destroy All" }):Button({
     Color = Color3.fromRGB(220,20,20),
     Callback = function()
         destroyAllPlacedBlocks()
-        WindUI:Notify({ Title = "Done", Content = "All placed blocks destroyed." })
     end,
 })
 
@@ -782,5 +818,5 @@ Window:Button({
     end,
 })
 
-WindUI:Notify({ Title = "Build Exploit Pack", Content = "Loaded with DestroyBlockEven remote." })
-print("Build Exploit Pack – DestroyBlockEven version loaded.")
+WindUI:Notify({ Title = "Build Exploit Pack", Content = "Fully loaded! Remotes: Place & Destroy." })
+print("Script loaded successfully!")
