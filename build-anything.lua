@@ -1,5 +1,5 @@
--- Build Exploit Pack – WindUI Edition (Orbit Aura, Spammer Radius 13)
--- Aura now has configurable Min/Max Height and Y Offset. Toggle renamed to Orbit.
+-- Build Exploit Pack – WindUI Edition (Final Optimized)
+-- Spammer fills radius 13 sphere, Orbit (Aura) with min/max height + Y offset, all features.
 
 local WindUI = nil
 pcall(function()
@@ -56,7 +56,7 @@ local function startFeature(name, loopFunc)
     activeFeatures[name] = { thread = thread, running = flag }
 end
 
--- Place block helper – exact CFrame (0,0,1,0,1,0,-1,0,0)
+-- Place block helper – exact CFrame from working example (0,0,1,0,1,0,-1,0,0)
 local function placeBlock(blockType, pos)
     local bp = workspace:FindFirstChild("Baseplate") or workspace
     local roundedPos = Vector3.new(math.round(pos.X), math.round(pos.Y), math.round(pos.Z))
@@ -451,42 +451,42 @@ MainTab:Toggle({
     end,
 })
 
--- ==================== ORBIT TAB (formerly Aura) ====================
+-- ==================== ORBIT TAB (renamed) ====================
 local OrbitTab = Window:Tab({ Title = "Orbit", Icon = "solar:star-bold" })
-local auraTarget = nil
-local auraDropdown = OrbitTab:Section({ Title = "Orbit Target" }):Dropdown({
+local orbitTarget = nil
+local orbitDropdown = OrbitTab:Section({ Title = "Orbit Target" }):Dropdown({
     Title = "Select Target", Values = {}, AllowNone = true,
     Callback = function(value)
         if value then
             for _, plr in ipairs(Players:GetPlayers()) do
-                if plr.Name == value and plr ~= player then auraTarget = plr return end
+                if plr.Name == value and plr ~= player then orbitTarget = plr return end
             end
-        else auraTarget = nil end
+        else orbitTarget = nil end
     end,
 })
-refreshDropdown(auraDropdown)
-Players.PlayerAdded:Connect(function() refreshDropdown(auraDropdown) end)
+refreshDropdown(orbitDropdown)
+Players.PlayerAdded:Connect(function() refreshDropdown(orbitDropdown) end)
 Players.PlayerRemoving:Connect(function(p)
-    if auraTarget == p then auraTarget = nil; auraDropdown:Select(nil) end
-    refreshDropdown(auraDropdown)
+    if orbitTarget == p then orbitTarget = nil; orbitDropdown:Select(nil) end
+    refreshDropdown(orbitDropdown)
 end)
 
 -- Orbit parameters
 local orbitSpeed = 0.3
 local orbitClearDist = 20
-local orbitRadius = 20      -- horizontal orbit distance
-local orbitMinHeight = -5   -- min Y relative to target + offset
-local orbitMaxHeight = 10   -- max Y relative to target + offset
-local orbitYOffset = 0      -- additional vertical offset
+local orbitRadius = 20
+local orbitMinHeight = -5
+local orbitMaxHeight = 10
+local orbitYOffset = 0
 local orbitAngle = 0
 
 OrbitTab:Toggle({
-    Title = "Orbit",   -- renamed
+    Title = "Orbit",
     Callback = function(state)
         if state then
             startFeature("orbit", function(flag)
                 while flag.running do
-                    local target = auraTarget
+                    local target = orbitTarget
                     if target and target.Character and target.Character.PrimaryPart then
                         local tpos = target.Character.PrimaryPart.Position
                         -- Horizontal position
@@ -536,36 +536,40 @@ OrbitTab:Slider({ Title = "Min Height", Step = 1, Value = { Min = -10, Max = 10,
 OrbitTab:Slider({ Title = "Max Height", Step = 1, Value = { Min = -10, Max = 20, Default = 10 }, Callback = function(v) orbitMaxHeight = v end })
 OrbitTab:Slider({ Title = "Y Offset", Step = 1, Value = { Min = -10, Max = 10, Default = 0 }, Callback = function(v) orbitYOffset = v end })
 
--- SPAMMER TAB (Radius 13)
+-- SPAMMER TAB (Fast Sphere Fill r=13)
 local SpammerTab = Window:Tab({ Title = "Spammer", Icon = "solar:layers-bold" })
-local spamDelay = 0
+local spamDelay = 0  -- delay between blocks (0 = instant)
+
 SpammerTab:Toggle({
     Title = "Sphere Fill (r=13)",
     Callback = function(state)
         if state then
             startFeature("spammer", function(flag)
                 local radius = 13
+                -- Precompute the list of relative positions for a sphere of radius 13 centered at origin
+                local relativePositions = {}
+                for x = -radius, radius do
+                    for y = -radius, radius do
+                        for z = -radius, radius do
+                            local relPos = Vector3.new(x, y, z)
+                            if relPos.Magnitude <= radius then
+                                table.insert(relativePositions, relPos)
+                            end
+                        end
+                    end
+                end
                 while flag.running do
                     if character and character.PrimaryPart then
                         local center = character.PrimaryPart.Position
-                        -- Precompute positions for efficiency
-                        local positions = {}
-                        for x = -radius, radius do
-                            for y = -radius, radius do
-                                for z = -radius, radius do
-                                    local pos = Vector3.new(center.X+x, center.Y+y, center.Z+z)
-                                    if (pos - center).Magnitude <= radius then
-                                        table.insert(positions, pos)
-                                    end
-                                end
-                            end
-                        end
-                        for _, pos in ipairs(positions) do
+                        -- Place all sphere blocks as fast as possible
+                        for _, relPos in ipairs(relativePositions) do
                             if not flag.running then return end
-                            placeBlock("Glass", pos)
+                            local worldPos = center + relPos
+                            placeBlock("Glass", worldPos)
                             if spamDelay > 0 then task.wait(spamDelay) end
                         end
-                        task.wait() -- yield after filling sphere
+                        -- After filling the entire sphere, yield to avoid script timeout
+                        task.wait()
                     else
                         task.wait(0.5)
                     end
@@ -576,6 +580,7 @@ SpammerTab:Toggle({
         end
     end,
 })
+
 SpammerTab:Slider({
     Title = "Delay (s)",
     Step = 0.001,
@@ -703,5 +708,5 @@ Window:Button({
     end,
 })
 
-WindUI:Notify({ Title = "Build Exploit Pack", Content = "Orbit aura & spammer ready!" })
-print("Build Exploit Pack – Orbit, Spammer Loaded.")
+WindUI:Notify({ Title = "Build Exploit Pack", Content = "Orbit, spammer (r=13) ready." })
+print("Build Exploit Pack – Optimized Loaded.")
