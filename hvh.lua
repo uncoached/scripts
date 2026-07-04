@@ -2,6 +2,9 @@
 --// Works in most Roblox FPS games. Auto‑detects common weapon remotes.
 --// If Silent Aim doesn't work, enter the correct remote name in the UI.
 --// All exploit functions are checked before use – no crashes.
+--//
+--// This version uses proper WindUI syntax (no method chaining on sections)
+--// to ensure all UI elements appear correctly.
 
 local WindUI = nil
 local function loadWindUI()
@@ -36,7 +39,7 @@ local Settings = {
         Smoothness = 0.1,
         HitPart = "Head",
         VisibleCheck = true,
-        TeamCheck = false,         -- Off by default (universal)
+        TeamCheck = false,
         AimKey = Enum.UserInputType.MouseButton2,
     },
     Triggerbot = {
@@ -61,7 +64,7 @@ local Settings = {
         Enabled = false,
         Sensitivity = 0.5,
     },
-    SilentAimRemote = "FireBullet",  -- default remote name
+    SilentAimRemote = "FireBullet",
 }
 
 -- Drawing library
@@ -88,7 +91,6 @@ local function getHRP(char) return char and char:FindFirstChild("HumanoidRootPar
 local function getHumanoid(char) return char and char:FindFirstChildWhichIsA("Humanoid") end
 local function teamCheck(player)
     if not Settings.Aimbot.TeamCheck then return false end
-    -- Check if teams exist and compare
     return player.Team == LocalPlayer.Team
 end
 local function isVisible(part)
@@ -192,7 +194,6 @@ local function hookSilentAim(remoteName)
         local oldFire = hookfunction(remote.FireServer, function(self, ...)
             local args = {...}
             if SilentAimTarget and Settings.Aimbot.Enabled and Settings.Aimbot.Silent then
-                -- Assume the first argument is the target position (Vector3)
                 args[1] = SilentAimTarget.Position
             end
             return oldFire(self, unpack(args))
@@ -203,7 +204,8 @@ local function hookSilentAim(remoteName)
 end
 
 -- Initial hook attempt
-local silentAimHooked = pcall(function() hookSilentAim(Settings.SilentAimRemote) end)
+local silentAimHooked = false
+pcall(function() silentAimHooked = hookSilentAim(Settings.SilentAimRemote) end)
 
 -- ================= TRIGGERBOT =================
 task.spawn(function()
@@ -387,7 +389,7 @@ UIS.InputChanged:Connect(function(input)
     end
 end)
 
--- ================= WINDUI INTERFACE =================
+-- ================= WINDUI INTERFACE (proper syntax) =================
 local Window = WindUI:CreateWindow({
     Title = "Universal HvH",
     Folder = "universal_hvh",
@@ -405,38 +407,37 @@ local Tab_Move = Window:Tab({ Title = "Movement", Icon = "solar:run-bold" })
 local Tab_Ctrl = Window:Tab({ Title = "Controller", Icon = "solar:gamepad-bold" })
 local Tab_Misc = Window:Tab({ Title = "Misc", Icon = "solar:settings-bold" })
 
--- Aimbot
-Tab_Aim:Section({ Title = "Main" })
-    :Toggle({ Title = "Enable Aimbot", Value = false, Callback = function(v) Settings.Aimbot.Enabled = v end })
-    :Toggle({ Title = "Silent Aim (Raycast)", Value = true, Callback = function(v) Settings.Aimbot.Silent = v end })
-    :Toggle({ Title = "Visibility Check", Value = true, Callback = function(v) Settings.Aimbot.VisibleCheck = v end })
-    :Toggle({ Title = "Team Check", Value = false, Callback = function(v) Settings.Aimbot.TeamCheck = v end })
-    :Slider({ Title = "FOV", Step = 10, Value = { Min = 10, Max = 500, Default = 200 }, Callback = function(v) Settings.Aimbot.FOV = v end })
-    :Slider({ Title = "Smoothness", Step = 0.1, Value = { Min = 0.1, Max = 1, Default = 0.1 }, Callback = function(v) Settings.Aimbot.Smoothness = v end })
-    :Dropdown({ Title = "Hit Part", Values = { "Head", "UpperTorso", "HumanoidRootPart" }, Value = "Head", Callback = function(v) Settings.Aimbot.HitPart = v end })
-    :Dropdown({ Title = "Aim Key", Values = { "Right Mouse", "Left Mouse", "E", "Q" }, Value = "Right Mouse", Callback = function(v)
+-- Aimbot sections and elements
+do
+    local Section1 = Tab_Aim:Section({ Title = "Main" })
+    Section1:Toggle({ Title = "Enable Aimbot", Value = false, Callback = function(v) Settings.Aimbot.Enabled = v end })
+    Section1:Toggle({ Title = "Silent Aim (Raycast)", Value = true, Callback = function(v) Settings.Aimbot.Silent = v end })
+    Section1:Toggle({ Title = "Visibility Check", Value = true, Callback = function(v) Settings.Aimbot.VisibleCheck = v end })
+    Section1:Toggle({ Title = "Team Check", Value = false, Callback = function(v) Settings.Aimbot.TeamCheck = v end })
+    Section1:Slider({ Title = "FOV", Step = 10, Value = { Min = 10, Max = 500, Default = 200 }, Callback = function(v) Settings.Aimbot.FOV = v end })
+    Section1:Slider({ Title = "Smoothness", Step = 0.1, Value = { Min = 0.1, Max = 1, Default = 0.1 }, Callback = function(v) Settings.Aimbot.Smoothness = v end })
+    Section1:Dropdown({ Title = "Hit Part", Values = { "Head", "UpperTorso", "HumanoidRootPart" }, Value = "Head", Callback = function(v) Settings.Aimbot.HitPart = v end })
+    Section1:Dropdown({ Title = "Aim Key", Values = { "Right Mouse", "Left Mouse", "E", "Q" }, Value = "Right Mouse", Callback = function(v)
         if v == "Right Mouse" then Settings.Aimbot.AimKey = Enum.UserInputType.MouseButton2
         elseif v == "Left Mouse" then Settings.Aimbot.AimKey = Enum.UserInputType.MouseButton1
         else Settings.Aimbot.AimKey = Enum.KeyCode[v] end
     end })
 
--- Silent Aim Remote
-Tab_Aim:Section({ Title = "Silent Aim Remote" })
-    :Input({ Title = "Remote Name", Value = "FireBullet", Placeholder = "e.g. FireBullet", Callback = function(v)
+    local Section2 = Tab_Aim:Section({ Title = "Silent Aim Remote" })
+    Section2:Input({ Title = "Remote Name", Value = "FireBullet", Placeholder = "e.g. FireBullet", Callback = function(v)
         Settings.SilentAimRemote = v
-        silentAimHooked = pcall(function() hookSilentAim(v) end)
-        if not silentAimHooked then
+        local ok = pcall(function() silentAimHooked = hookSilentAim(v) end)
+        if not ok or not silentAimHooked then
             WindUI:Notify({ Title = "Error", Content = "Remote not found. Try a different name.", Duration = 3 })
         else
             WindUI:Notify({ Title = "Success", Content = "Silent aim hooked!", Duration = 2 })
         end
     end })
-    :Button({ Title = "Auto-Detect Remote", Callback = function()
-        -- Scan common remotes and attempt to hook
+    Section2:Button({ Title = "Auto-Detect Remote", Callback = function()
         local names = {"FireBullet", "Shoot", "WeaponFire", "Fire", "RaycastHit", "ShootEvent"}
         for _, name in ipairs(names) do
-            local ok = pcall(function() hookSilentAim(name) end)
-            if ok then
+            local ok = pcall(function() silentAimHooked = hookSilentAim(name) end)
+            if ok and silentAimHooked then
                 Settings.SilentAimRemote = name
                 WindUI:Notify({ Title = "Detected", Content = "Hooked remote: " .. name, Duration = 3 })
                 return
@@ -444,38 +445,51 @@ Tab_Aim:Section({ Title = "Silent Aim Remote" })
         end
         WindUI:Notify({ Title = "Failed", Content = "No known remote found. Enter manually.", Duration = 3 })
     end })
+end
 
 -- Triggerbot
-Tab_Trig:Section({ Title = "Triggerbot" })
-    :Toggle({ Title = "Enable Triggerbot", Value = false, Callback = function(v) Settings.Triggerbot.Enabled = v end })
-    :Slider({ Title = "Delay (ms)", Step = 10, Value = { Min = 0, Max = 500, Default = 0 }, Callback = function(v) Settings.Triggerbot.Delay = v end })
+do
+    local Section = Tab_Trig:Section({ Title = "Triggerbot" })
+    Section:Toggle({ Title = "Enable Triggerbot", Value = false, Callback = function(v) Settings.Triggerbot.Enabled = v end })
+    Section:Slider({ Title = "Delay (ms)", Step = 10, Value = { Min = 0, Max = 500, Default = 0 }, Callback = function(v) Settings.Triggerbot.Delay = v end })
+end
 
--- Hitbox Expander
-Tab_Hit:Section({ Title = "Hitbox" })
-    :Toggle({ Title = "Enable Hitbox", Value = false, Callback = function(v) Settings.Hitbox.Enabled = v end })
-    :Slider({ Title = "Head Size", Step = 0.1, Value = { Min = 1, Max = 3, Default = 3 }, Callback = function(v) Settings.Hitbox.Size = v end })
+-- Hitbox
+do
+    local Section = Tab_Hit:Section({ Title = "Hitbox" })
+    Section:Toggle({ Title = "Enable Hitbox", Value = false, Callback = function(v) Settings.Hitbox.Enabled = v end })
+    Section:Slider({ Title = "Head Size", Step = 0.1, Value = { Min = 1, Max = 3, Default = 3 }, Callback = function(v) Settings.Hitbox.Size = v end })
+end
 
 -- ESP
-Tab_ESP:Section({ Title = "Player ESP" })
-    :Toggle({ Title = "Enable ESP", Value = false, Callback = function(v) Settings.ESP.Enabled = v end })
-    :Toggle({ Title = "Box", Value = true, Callback = function(v) Settings.ESP.Box = v end })
-    :Toggle({ Title = "Name", Value = true, Callback = function(v) Settings.ESP.Name = v end })
-    :Toggle({ Title = "Health Bar", Value = true, Callback = function(v) Settings.ESP.HealthBar = v end })
-    :Toggle({ Title = "Distance", Value = true, Callback = function(v) Settings.ESP.Distance = v end })
+do
+    local Section = Tab_ESP:Section({ Title = "Player ESP" })
+    Section:Toggle({ Title = "Enable ESP", Value = false, Callback = function(v) Settings.ESP.Enabled = v end })
+    Section:Toggle({ Title = "Box", Value = true, Callback = function(v) Settings.ESP.Box = v end })
+    Section:Toggle({ Title = "Name", Value = true, Callback = function(v) Settings.ESP.Name = v end })
+    Section:Toggle({ Title = "Health Bar", Value = true, Callback = function(v) Settings.ESP.HealthBar = v end })
+    Section:Toggle({ Title = "Distance", Value = true, Callback = function(v) Settings.ESP.Distance = v end })
+end
 
 -- World effects
-Tab_World:Section({ Title = "Effects" })
-    :Toggle({ Title = "Anti-Flashbang", Value = false, Callback = function(v) Settings.AntiFlash = v end })
-    :Toggle({ Title = "Anti-Smoke", Value = false, Callback = function(v) Settings.AntiSmoke = v end })
+do
+    local Section = Tab_World:Section({ Title = "Effects" })
+    Section:Toggle({ Title = "Anti-Flashbang", Value = false, Callback = function(v) Settings.AntiFlash = v end })
+    Section:Toggle({ Title = "Anti-Smoke", Value = false, Callback = function(v) Settings.AntiSmoke = v end })
+end
 
 -- Movement
-Tab_Move:Section({ Title = "Bunny Hop" })
-    :Toggle({ Title = "Bunny Hop (Hold Space)", Value = false, Callback = function(v) Settings.Bhop = v end })
+do
+    local Section = Tab_Move:Section({ Title = "Bunny Hop" })
+    Section:Toggle({ Title = "Bunny Hop (Hold Space)", Value = false, Callback = function(v) Settings.Bhop = v end })
+end
 
 -- Controller
-Tab_Ctrl:Section({ Title = "Aim Assist" })
-    :Toggle({ Title = "Use Controller Aim (Right Stick)", Value = false, Callback = function(v) Settings.Controller.Enabled = v end })
-    :Slider({ Title = "Sensitivity", Step = 0.1, Value = { Min = 0.1, Max = 2, Default = 0.5 }, Callback = function(v) Settings.Controller.Sensitivity = v end })
+do
+    local Section = Tab_Ctrl:Section({ Title = "Aim Assist" })
+    Section:Toggle({ Title = "Use Controller Aim (Right Stick)", Value = false, Callback = function(v) Settings.Controller.Enabled = v end })
+    Section:Slider({ Title = "Sensitivity", Step = 0.1, Value = { Min = 0.1, Max = 2, Default = 0.5 }, Callback = function(v) Settings.Controller.Sensitivity = v end })
+end
 
 -- Misc
 Tab_Misc:Button({
