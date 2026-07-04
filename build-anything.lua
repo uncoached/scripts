@@ -1,5 +1,3 @@
--- Build Exploit Pack – WindUI Edition (Fast Spammer, Radius 13)
--- Spammer fills a 13‑stud sphere instantly on toggle, then rapidly refills as you move.
 
 local WindUI = nil
 pcall(function()
@@ -451,10 +449,10 @@ MainTab:Toggle({
     end,
 })
 
--- AURA TAB
-local AuraTab = Window:Tab({ Title = "Aura", Icon = "solar:star-bold" })
+-- ==================== ORBIT TAB (formerly Aura) ====================
+local OrbitTab = Window:Tab({ Title = "Orbit", Icon = "solar:star-bold" })
 local auraTarget = nil
-local auraDropdown = AuraTab:Section({ Title = "Aura Target" }):Dropdown({
+local auraDropdown = OrbitTab:Section({ Title = "Orbit Target" }):Dropdown({
     Title = "Select Target", Values = {}, AllowNone = true,
     Callback = function(value)
         if value then
@@ -471,39 +469,50 @@ Players.PlayerRemoving:Connect(function(p)
     refreshDropdown(auraDropdown)
 end)
 
-local auraSpeed = 0.3
-local auraClear = 20
-local auraOrbit = 20
-local auraAngle = 0
+-- Orbit parameters
+local orbitSpeed = 0.3
+local orbitClearDist = 20
+local orbitRadius = 20      -- horizontal orbit distance
+local orbitMinHeight = -5   -- min Y relative to target + offset
+local orbitMaxHeight = 10   -- max Y relative to target + offset
+local orbitYOffset = 0      -- additional vertical offset
+local orbitAngle = 0
 
-AuraTab:Toggle({
-    Title = "Destroy Aura",
+OrbitTab:Toggle({
+    Title = "Orbit",   -- renamed
     Callback = function(state)
         if state then
-            startFeature("aura", function(flag)
+            startFeature("orbit", function(flag)
                 while flag.running do
                     local target = auraTarget
                     if target and target.Character and target.Character.PrimaryPart then
                         local tpos = target.Character.PrimaryPart.Position
-                        local dynR = auraOrbit + math.sin(auraAngle*0.5)*5
-                        local offset = Vector3.new(math.cos(auraAngle)*dynR, 2+math.sin(auraAngle*2)*10, math.sin(auraAngle)*dynR)
-                        local myPos = tpos + offset
+                        -- Horizontal position
+                        local hPos = Vector3.new(math.cos(orbitAngle) * orbitRadius, 0, math.sin(orbitAngle) * orbitRadius)
+                        -- Vertical: sinusoidal between minHeight and maxHeight above target Y + offset
+                        local yOffset = orbitYOffset
+                        local minH = orbitMinHeight
+                        local maxH = orbitMaxHeight
+                        local t = (math.sin(orbitAngle * 2) + 1) / 2   -- 0..1 oscillation
+                        local y = tpos.Y + yOffset + minH + (maxH - minH) * t
+                        local myPos = Vector3.new(tpos.X + hPos.X, y, tpos.Z + hPos.Z)
+
                         if character and character.PrimaryPart then
                             pcall(function() character:PivotTo(CFrame.new(myPos)) end)
                         end
                         task.spawn(function()
                             for _, v in ipairs(builtFolder:GetDescendants()) do
-                                if v:IsA("BasePart") and v.Parent and (v.Position - myPos).Magnitude <= auraClear then
+                                if v:IsA("BasePart") and v.Parent and (v.Position - myPos).Magnitude <= orbitClearDist then
                                     pcall(function() destroyRemote:InvokeServer(v) end)
                                 end
                             end
                         end)
-                        auraAngle = auraAngle + auraSpeed
+                        orbitAngle = orbitAngle + orbitSpeed
                     elseif character and character.PrimaryPart then
                         local pos = character.PrimaryPart.Position
                         task.spawn(function()
                             for _, v in ipairs(builtFolder:GetDescendants()) do
-                                if v:IsA("BasePart") and v.Parent and (v.Position - pos).Magnitude <= auraClear then
+                                if v:IsA("BasePart") and v.Parent and (v.Position - pos).Magnitude <= orbitClearDist then
                                     pcall(function() destroyRemote:InvokeServer(v) end)
                                 end
                             end
@@ -512,26 +521,32 @@ AuraTab:Toggle({
                     task.wait()
                 end
             end)
-        else stopFeature("aura") end
+        else
+            stopFeature("orbit")
+        end
     end,
 })
-AuraTab:Slider({ Title = "Speed", Step = 0.01, Value = { Min = 0.05, Max = 1, Default = 0.3 }, Callback = function(v) auraSpeed = v end })
-AuraTab:Slider({ Title = "Clear Dist", Step = 1, Value = { Min = 5, Max = 50, Default = 20 }, Callback = function(v) auraClear = v end })
-AuraTab:Slider({ Title = "Orbit Dist", Step = 1, Value = { Min = 5, Max = 50, Default = 20 }, Callback = function(v) auraOrbit = v end })
 
--- SPAMMER TAB (FAST, RADIUS 13)
+OrbitTab:Slider({ Title = "Speed", Step = 0.01, Value = { Min = 0.05, Max = 1, Default = 0.3 }, Callback = function(v) orbitSpeed = v end })
+OrbitTab:Slider({ Title = "Clear Dist", Step = 1, Value = { Min = 5, Max = 50, Default = 20 }, Callback = function(v) orbitClearDist = v end })
+OrbitTab:Slider({ Title = "Orbit Radius", Step = 1, Value = { Min = 5, Max = 50, Default = 20 }, Callback = function(v) orbitRadius = v end })
+OrbitTab:Slider({ Title = "Min Height", Step = 1, Value = { Min = -10, Max = 10, Default = -5 }, Callback = function(v) orbitMinHeight = v end })
+OrbitTab:Slider({ Title = "Max Height", Step = 1, Value = { Min = -10, Max = 20, Default = 10 }, Callback = function(v) orbitMaxHeight = v end })
+OrbitTab:Slider({ Title = "Y Offset", Step = 1, Value = { Min = -10, Max = 10, Default = 0 }, Callback = function(v) orbitYOffset = v end })
+
+-- SPAMMER TAB (Radius 13)
 local SpammerTab = Window:Tab({ Title = "Spammer", Icon = "solar:layers-bold" })
-local spamDelay = 0      -- delay between blocks (0 = instant)
+local spamDelay = 0
 SpammerTab:Toggle({
     Title = "Sphere Fill (r=13)",
     Callback = function(state)
         if state then
             startFeature("spammer", function(flag)
-                local radius = 10
+                local radius = 13
                 while flag.running do
                     if character and character.PrimaryPart then
                         local center = character.PrimaryPart.Position
-                        -- Collect all valid positions in this sphere
+                        -- Precompute positions for efficiency
                         local positions = {}
                         for x = -radius, radius do
                             for y = -radius, radius do
@@ -543,14 +558,12 @@ SpammerTab:Toggle({
                                 end
                             end
                         end
-                        -- Place blocks as fast as possible
                         for _, pos in ipairs(positions) do
                             if not flag.running then return end
                             placeBlock("Glass", pos)
                             if spamDelay > 0 then task.wait(spamDelay) end
                         end
-                        -- After filling the sphere, yield to avoid script timeout
-                        task.wait()
+                        task.wait() -- yield after filling sphere
                     else
                         task.wait(0.5)
                     end
@@ -564,7 +577,7 @@ SpammerTab:Toggle({
 SpammerTab:Slider({
     Title = "Delay (s)",
     Step = 0.001,
-    Value = { Min = 0.01, Max = 0.1, Default = 0.01 },
+    Value = { Min = 0, Max = 0.1, Default = 0 },
     Callback = function(v) spamDelay = v end,
 })
 
@@ -688,5 +701,5 @@ Window:Button({
     end,
 })
 
-WindUI:Notify({ Title = "Build Exploit Pack", Content = "Fast spammer (r=13) ready!" })
-print("Build Exploit Pack – Fast Spammer Loaded.")
+WindUI:Notify({ Title = "Build Exploit Pack", Content = "Orbit aura & spammer ready!" })
+print("Build Exploit Pack – Orbit, Spammer Loaded.")
