@@ -1,29 +1,53 @@
---// Advanced HvH Script for ROBLOX RIVALS (Custom UI – No External Libraries)
---// Features: ESP (Box, Name, Health, Distance, Skeleton), Camera Aimbot, Raycast Silent Aim, Triggerbot,
---//           Controller Support (Right Stick Aim), Radar, Chams, Glow, Anti-Aim, Nightmode, Fullbright, etc.
---// Requires a mid/high-level executor (supports Drawing, getconnections, hookfunction, mouse1press, etc.)
+--[[
+    Advanced HvH Script for Roblox Rivals (WindUI)
+    Features: ESP (Box, Name, Health, Distance, Skeleton), Camera Aimbot, Silent Aim (Raycast), Triggerbot,
+              Controller Support (Right Stick Aim), Radar, Chams, Glow, Anti-Aim (Desync), Nightmode, Fullbright.
+    FOV circle is outline only.
+]]
 
-local Players = game:GetService("Players")
+--// Environment
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
+local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local Camera = Workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
-local Mouse = LocalPlayer:GetMouse()
+local Lighting = game:GetService("Lighting")
 
---// ============= SETTINGS =============
+--// Safe cloneref
+local cloneref = (cloneref or clonereference or function(instance) return instance end)
+
+--// WindUI Initialization (exactly as provided)
+local WindUI
+do
+    local ok, result = pcall(function()
+        return require("./src/Init")
+    end)
+
+    if ok then
+        WindUI = result
+    else
+        if cloneref(game:GetService("RunService")):IsStudio() then
+            WindUI = require(cloneref(game:GetService("ReplicatedStorage"):WaitForChild("WindUI"):WaitForChild("Init")))
+        else
+            WindUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
+        end
+    end
+end
+
+--// Settings
 local Settings = {
     Aimbot = {
         Enabled = false,
-        Silent = true,              -- Raycast silent aim (overrides bullet destination)
-        HitPart = "Head",          -- Head, UpperTorso, HumanoidRootPart
-        FOV = 200,                 -- Aim assist radius (pixels)
-        Smoothness = 0.1,          -- 0 = instant snap, 1 = very slow
-        VisibleCheck = true,       -- Only target visible enemies
-        TeamCheck = true,          -- Ignore teammates
+        Silent = true,
+        HitPart = "Head",
+        FOV = 200,
+        Smoothness = 0.1,
+        VisibleCheck = true,
+        TeamCheck = true,
         Triggerbot = false,
         TriggerDelay = 0.1,
-        UseController = false,      -- Activate aim assist with controller right stick
+        UseController = false,
         ControllerSensitivity = 0.5,
     },
     Visuals = {
@@ -44,13 +68,13 @@ local Settings = {
         Radar = true,
         RadarSize = 200,
         RadarZoom = 1,
-        AntiAim = false,           -- Desync fake angles
+        AntiAim = false,
         DesyncAngle = 45,
         AutoCrouch = false,
     }
 }
 
---// ============= UTILITY FUNCTIONS =============
+--// Utility Functions
 local function getCharacter(player)
     return player.Character or player.CharacterAdded:Wait()
 end
@@ -68,370 +92,23 @@ local function isVisible(targetPart)
     return hit and hit:IsDescendantOf(targetPart.Parent)
 end
 
---// ============= CUSTOM UI LIBRARY =============
-local UILib = {}
-UILib.Windows = {}
-
-function UILib:CreateWindow(title, size)
-    local screenGui = Instance.new("ScreenGui")
-    screenGui.Parent = game.CoreGui
-    local window = Instance.new("Frame")
-    window.Size = size or UDim2.new(0, 600, 0, 400)
-    window.Position = UDim2.new(0.5, -300, 0.5, -200)
-    window.BackgroundColor3 = Color3.fromRGB(25,25,25)
-    window.BorderSizePixel = 0
-    window.ClipsDescendants = true
-    window.Parent = screenGui
-
-    local topBar = Instance.new("Frame")
-    topBar.Size = UDim2.new(1,0,0,30)
-    topBar.BackgroundColor3 = Color3.fromRGB(45,45,45)
-    topBar.BorderSizePixel = 0
-    topBar.Parent = window
-
-    local titleLabel = Instance.new("TextLabel")
-    titleLabel.Size = UDim2.new(1,-80,1,0)
-    titleLabel.Position = UDim2.new(0,10,0,0)
-    titleLabel.BackgroundTransparency = 1
-    titleLabel.Text = title
-    titleLabel.TextColor3 = Color3.new(1,1,1)
-    titleLabel.Font = Enum.Font.SourceSans
-    titleLabel.TextSize = 18
-    titleLabel.TextXAlignment = Enum.TextXAlignment.Left
-    titleLabel.Parent = topBar
-
-    local closeBtn = Instance.new("TextButton")
-    closeBtn.Size = UDim2.new(0,30,0,30)
-    closeBtn.Position = UDim2.new(1,-30,0,0)
-    closeBtn.BackgroundColor3 = Color3.fromRGB(255,60,60)
-    closeBtn.Text = "X"
-    closeBtn.TextColor3 = Color3.new(1,1,1)
-    closeBtn.Parent = topBar
-    closeBtn.MouseButton1Click:Connect(function() screenGui:Destroy() end)
-
-    -- Tabs container
-    local tabContainer = Instance.new("Frame")
-    tabContainer.Size = UDim2.new(0,120,1,-30)
-    tabContainer.Position = UDim2.new(0,0,0,30)
-    tabContainer.BackgroundColor3 = Color3.fromRGB(35,35,35)
-    tabContainer.BorderSizePixel = 0
-    tabContainer.Name = "TabContainer"
-    tabContainer.Parent = window
-
-    local pages = Instance.new("Frame")
-    pages.Size = UDim2.new(1,-120,1,-30)
-    pages.Position = UDim2.new(0,120,0,30)
-    pages.BackgroundColor3 = Color3.fromRGB(30,30,30)
-    pages.BorderSizePixel = 0
-    pages.Name = "Pages"
-    pages.Parent = window
-
-    -- Draggability
-    local dragging, dragInput, dragStart, startPos
-    topBar.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true
-            dragStart = input.Position
-            startPos = window.Position
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    dragging = false
-                end
-            end)
-        end
-    end)
-    topBar.InputChanged:Connect(function(input)
-        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-            local delta = input.Position - dragStart
-            window.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-        end
-    end)
-
-    local wind = { Window = window, Tabs = {}, Pages = pages, ScreenGui = screenGui }
-    table.insert(UILib.Windows, wind)
-    return wind
+--// Drawing Library (for ESP and FOV circle)
+local Drawing = nil
+pcall(function()
+    Drawing = loadstring(game:HttpGet("https://raw.githubusercontent.com/Insei/PenisMan/refs/heads/main/DrawingLib.lua"))()
+end)
+if not Drawing then
+    pcall(function() Drawing = {}; Drawing.new = function() return {} end end)
 end
 
-function UILib:CreateTab(window, name)
-    local tabBtn = Instance.new("TextButton")
-    tabBtn.Size = UDim2.new(1,0,0,30)
-    tabBtn.BackgroundColor3 = Color3.fromRGB(45,45,45)
-    tabBtn.Text = name
-    tabBtn.TextColor3 = Color3.new(1,1,1)
-    tabBtn.Font = Enum.Font.SourceSans
-    tabBtn.TextSize = 16
-    tabBtn.Parent = window.Window:FindFirstChild("TabContainer")
-    if not window.TabsContainer then window.TabsContainer = tabBtn.Parent end
-
-    local page = Instance.new("Frame")
-    page.Size = UDim2.new(1,0,1,0)
-    page.BackgroundTransparency = 1
-    page.Parent = window.Pages
-    page.Visible = false
-
-    tabBtn.MouseButton1Click:Connect(function()
-        for _, p in pairs(window.Pages:GetChildren()) do p.Visible = false end
-        page.Visible = true
-    end)
-
-    local tab = { Button = tabBtn, Page = page }
-    table.insert(window.Tabs, tab)
-    return tab
-end
-
-function UILib:CreateToggle(tab, text, default, callback)
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(1, -20, 0, 30)
-    frame.Position = UDim2.new(0,10,0,0)
-    frame.BackgroundTransparency = 1
-    frame.Parent = tab.Page
-
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, -40, 1, 0)
-    label.BackgroundTransparency = 1
-    label.Text = text
-    label.TextColor3 = Color3.new(1,1,1)
-    label.Font = Enum.Font.SourceSans
-    label.TextSize = 14
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = frame
-
-    local toggleBtn = Instance.new("TextButton")
-    toggleBtn.Size = UDim2.new(0, 30, 0, 20)
-    toggleBtn.Position = UDim2.new(1, -35, 0, 5)
-    toggleBtn.BackgroundColor3 = default and Color3.fromRGB(0,255,0) or Color3.fromRGB(100,100,100)
-    toggleBtn.Text = ""
-    toggleBtn.BorderSizePixel = 0
-    toggleBtn.Parent = frame
-
-    local state = default
-    toggleBtn.MouseButton1Click:Connect(function()
-        state = not state
-        toggleBtn.BackgroundColor3 = state and Color3.fromRGB(0,255,0) or Color3.fromRGB(100,100,100)
-        callback(state)
-    end)
-
-    return { Toggle = state, Button = toggleBtn }
-end
-
-function UILib:CreateSlider(tab, text, min, max, default, step, callback)
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(1, -20, 0, 40)
-    frame.BackgroundTransparency = 1
-    frame.Parent = tab.Page
-
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1,0,0,15)
-    label.BackgroundTransparency = 1
-    label.Text = text .. " [".. default .."]"
-    label.TextColor3 = Color3.new(1,1,1)
-    label.Font = Enum.Font.SourceSans
-    label.TextSize = 14
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = frame
-
-    local sliderBg = Instance.new("Frame")
-    sliderBg.Size = UDim2.new(1, -40, 0, 10)
-    sliderBg.Position = UDim2.new(0,20,0,20)
-    sliderBg.BackgroundColor3 = Color3.fromRGB(70,70,70)
-    sliderBg.BorderSizePixel = 0
-    sliderBg.Parent = frame
-
-    local sliderFill = Instance.new("Frame")
-    sliderFill.Size = UDim2.new(0,0,1,0)
-    sliderFill.BackgroundColor3 = Color3.fromRGB(0,170,255)
-    sliderFill.BorderSizePixel = 0
-    sliderFill.Parent = sliderBg
-
-    local sliderBtn = Instance.new("TextButton")
-    sliderBtn.Size = UDim2.new(0,16,0,16)
-    sliderBtn.Position = UDim2.new(0, -8, 0, -3)
-    sliderBtn.BackgroundColor3 = Color3.new(1,1,1)
-    sliderBtn.Text = ""
-    sliderBtn.BorderSizePixel = 0
-    sliderBtn.Parent = sliderBg
-
-    local function updateValue(value)
-        local percent = (value - min) / (max - min)
-        sliderFill.Size = UDim2.new(percent, 0, 1, 0)
-        sliderBtn.Position = UDim2.new(percent, -8, 0, -3)
-        label.Text = text .. " [".. math.floor(value) .."]"
-        callback(value)
-    end
-
-    local val = default
-    updateValue(val)
-
-    local dragging = false
-    sliderBtn.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true
-        end
-    end)
-    sliderBtn.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = false
-        end
-    end)
-    UserInputService.InputChanged:Connect(function(input)
-        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-            local percent = math.clamp((input.Position.X - sliderBg.AbsolutePosition.X) / sliderBg.AbsoluteSize.X, 0, 1)
-            val = min + percent * (max - min)
-            if step then val = math.floor(val / step + 0.5) * step end
-            updateValue(val)
-        end
-    end)
-
-    return { Set = function(v) val = v; updateValue(v) end, Get = function() return val end }
-end
-
-function UILib:CreateDropdown(tab, text, options, default, callback)
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(1, -20, 0, 30)
-    frame.BackgroundTransparency = 1
-    frame.Parent = tab.Page
-
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, -80, 1, 0)
-    label.BackgroundTransparency = 1
-    label.Text = text
-    label.TextColor3 = Color3.new(1,1,1)
-    label.Font = Enum.Font.SourceSans
-    label.TextSize = 14
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = frame
-
-    local chosen = default or options[1]
-    local selectedLabel = Instance.new("TextLabel")
-    selectedLabel.Size = UDim2.new(0, 80, 1, 0)
-    selectedLabel.Position = UDim2.new(1, -80, 0, 0)
-    selectedLabel.BackgroundColor3 = Color3.fromRGB(60,60,60)
-    selectedLabel.Text = chosen
-    selectedLabel.TextColor3 = Color3.new(1,1,1)
-    selectedLabel.Font = Enum.Font.SourceSans
-    selectedLabel.TextSize = 14
-    selectedLabel.Parent = frame
-
-    local dropdownFrame = Instance.new("Frame")
-    dropdownFrame.Size = UDim2.new(0, 80, 0, #options * 25)
-    dropdownFrame.Position = UDim2.new(1, -80, 1, 0)
-    dropdownFrame.BackgroundColor3 = Color3.fromRGB(50,50,50)
-    dropdownFrame.Visible = false
-    dropdownFrame.Parent = frame
-
-    for i, opt in ipairs(options) do
-        local optBtn = Instance.new("TextButton")
-        optBtn.Size = UDim2.new(1,0,0,25)
-        optBtn.Position = UDim2.new(0,0,0, (i-1)*25)
-        optBtn.BackgroundColor3 = Color3.fromRGB(60,60,60)
-        optBtn.Text = opt
-        optBtn.TextColor3 = Color3.new(1,1,1)
-        optBtn.Parent = dropdownFrame
-        optBtn.MouseButton1Click:Connect(function()
-            chosen = opt
-            selectedLabel.Text = opt
-            dropdownFrame.Visible = false
-            callback(opt)
-        end)
-    end
-
-    selectedLabel.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dropdownFrame.Visible = not dropdownFrame.Visible
-        end
-    end)
-
-    return { Get = function() return chosen end, Set = function(v) chosen = v; selectedLabel.Text = v end }
-end
-
-function UILib:CreateButton(tab, text, callback)
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, -20, 0, 30)
-    btn.Position = UDim2.new(0,10,0,0)
-    btn.BackgroundColor3 = Color3.fromRGB(50,50,50)
-    btn.Text = text
-    btn.TextColor3 = Color3.new(1,1,1)
-    btn.Font = Enum.Font.SourceSans
-    btn.TextSize = 14
-    btn.Parent = tab.Page
-    btn.MouseButton1Click:Connect(callback)
-    return btn
-end
-
---// ============= UI LAYOUT HELPER =============
-local function layoutElements(page)
-    local y = 10
-    for _, child in pairs(page:GetChildren()) do
-        if child:IsA("Frame") or child:IsA("TextButton") then
-            child.Position = UDim2.new(0, 10, 0, y)
-            y = y + child.Size.Y.Offset + 5
-        end
-    end
-end
-
---// ============= CREATE THE WINDOW =============
-local Window = UILib:CreateWindow("Roblox Rivals HvH", UDim2.new(0, 620, 0, 430))
-local aimTab = UILib:CreateTab(Window, "Aimbot")
-local espTab = UILib:CreateTab(Window, "ESP")
-local visualsTab = UILib:CreateTab(Window, "Visuals")
-local miscTab = UILib:CreateTab(Window, "Misc")
-
--- Aimbot elements
-UILib:CreateToggle(aimTab, "Enable Aimbot", false, function(v) Settings.Aimbot.Enabled = v end)
-UILib:CreateToggle(aimTab, "Silent Aim (Raycast)", true, function(v) Settings.Aimbot.Silent = v end)
-UILib:CreateToggle(aimTab, "Triggerbot", false, function(v) Settings.Aimbot.Triggerbot = v end)
-UILib:CreateToggle(aimTab, "Visibility Check", true, function(v) Settings.Aimbot.VisibleCheck = v end)
-UILib:CreateToggle(aimTab, "Team Check", true, function(v) Settings.Aimbot.TeamCheck = v end)
-UILib:CreateToggle(aimTab, "Use Controller", false, function(v) Settings.Aimbot.UseController = v end)
-UILib:CreateSlider(aimTab, "FOV", 10, 500, 200, 10, function(v) Settings.Aimbot.FOV = v end)
-UILib:CreateSlider(aimTab, "Smoothness", 0.01, 1, 0.1, 0.01, function(v) Settings.Aimbot.Smoothness = v end)
-UILib:CreateSlider(aimTab, "Controller Sensitivity", 0.1, 2, 0.5, 0.1, function(v) Settings.Aimbot.ControllerSensitivity = v end)
-UILib:CreateDropdown(aimTab, "Hit Part", {"Head","UpperTorso","HumanoidRootPart"}, "Head", function(v) Settings.Aimbot.HitPart = v end)
-UILib:CreateSlider(aimTab, "Trigger Delay", 0.05, 1, 0.1, 0.05, function(v) Settings.Aimbot.TriggerDelay = v end)
-
--- ESP elements
-UILib:CreateToggle(espTab, "Enable ESP", true, function(v) Settings.Visuals.ESP.Enabled = v end)
-UILib:CreateToggle(espTab, "Box", true, function(v) Settings.Visuals.ESP.Box = v end)
-UILib:CreateToggle(espTab, "Name", true, function(v) Settings.Visuals.ESP.Name = v end)
-UILib:CreateToggle(espTab, "Health Bar", true, function(v) Settings.Visuals.ESP.HealthBar = v end)
-UILib:CreateToggle(espTab, "Distance", true, function(v) Settings.Visuals.ESP.Distance = v end)
-UILib:CreateToggle(espTab, "Skeleton", false, function(v) Settings.Visuals.ESP.Skeleton = v end)
-
--- Visuals elements
-UILib:CreateToggle(visualsTab, "Chams", false, function(v) Settings.Visuals.Chams = v; toggleChams(v) end)
-UILib:CreateToggle(visualsTab, "Glow", false, function(v) Settings.Visuals.Glow = v; toggleGlow(v) end)
-UILib:CreateToggle(visualsTab, "Night Mode", false, function(v) Settings.Visuals.NightMode = v; Lighting.ClockTime = v and 0 or 14; Lighting.Brightness = v and 0.5 or 2 end)
-UILib:CreateToggle(visualsTab, "Fullbright", false, function(v) Settings.Visuals.Fullbright = v; Lighting.Ambient = v and Color3.new(1,1,1) or Color3.new(0,0,0) end)
-
--- Misc elements
-UILib:CreateToggle(miscTab, "Radar", true, function(v) Settings.Misc.Radar = v; toggleRadar(v) end)
-UILib:CreateSlider(miscTab, "Radar Size", 100, 400, 200, 10, function(v) Settings.Misc.RadarSize = v end)
-UILib:CreateSlider(miscTab, "Radar Zoom", 0.5, 5, 1, 0.1, function(v) Settings.Misc.RadarZoom = v end)
-UILib:CreateToggle(miscTab, "Anti-Aim (Desync)", false, function(v) Settings.Misc.AntiAim = v end)
-UILib:CreateSlider(miscTab, "Desync Angle", 0, 90, 45, 5, function(v) Settings.Misc.DesyncAngle = v end)
-UILib:CreateToggle(miscTab, "Auto Crouch", false, function(v) Settings.Misc.AutoCrouch = v end)
-
--- Layout all tabs
-for _, tab in pairs(Window.Tabs) do
-    layoutElements(tab.Page)
-end
-
--- Show first tab
-Window.Tabs[1].Page.Visible = true
-
---// ============= FEATURE IMPLEMENTATIONS =============
-local Lighting = game:GetService("Lighting")
+--// ESP Cache
 local ESPCache = {}
 local SilentAimTarget = nil
 
--- Drawing library initialization (for ESP)
-local Drawing = nil
-pcall(function() Drawing = loadstring(game:HttpGet("https://raw.githubusercontent.com/Insei/PenisMan/refs/heads/main/DrawingLib.lua"))() end)
-if not Drawing then pcall(function() Drawing = {}; Drawing.new = function() return {} end end) end
-
+--// ESP Creation and Update
 local function createESP(player)
     local esp = {}
-    if Drawing.new then
+    if Drawing and Drawing.new then
         esp.box = Drawing.new("Square")
         esp.box.Visible = false
         esp.box.Color = Color3.new(1,1,1)
@@ -457,7 +134,7 @@ local function createESP(player)
         esp.distance.Size = 12
 
         esp.skeleton = {}
-        for i=1,10 do  -- 10 bones pairs for skeleton
+        for i=1,10 do
             local line = Drawing.new("Line")
             line.Visible = false
             line.Color = Color3.new(1,1,1)
@@ -483,7 +160,11 @@ local function updateESP()
     for player, esp in pairs(ESPCache) do
         local char = player.Character
         if not char or player == LocalPlayer then
-            for _, v in pairs(esp) do if type(v)=="table" and v.Visible then v.Visible = false end end
+            if esp.box then esp.box.Visible = false end
+            if esp.name then esp.name.Visible = false end
+            if esp.healthBar then esp.healthBar.Visible = false end
+            if esp.distance then esp.distance.Visible = false end
+            if esp.skeleton then for _,v in pairs(esp.skeleton) do v.Visible = false end end
             continue
         end
         local hrp = getHRP(char)
@@ -502,13 +183,17 @@ local function updateESP()
                 esp.box.Visible = true
                 esp.box.Size = Vector2.new(width, height)
                 esp.box.Position = Vector2.new(x, y)
-            else if esp.box then esp.box.Visible = false end end
+            elseif esp.box then
+                esp.box.Visible = false
+            end
 
             if Settings.Visuals.ESP.Name and esp.name then
                 esp.name.Visible = true
                 esp.name.Text = player.Name
                 esp.name.Position = Vector2.new(hrpPos.X, y - 15)
-            else if esp.name then esp.name.Visible = false end end
+            elseif esp.name then
+                esp.name.Visible = false
+            end
 
             if Settings.Visuals.ESP.HealthBar and esp.healthBar then
                 local humanoid = getHumanoid(char)
@@ -518,15 +203,21 @@ local function updateESP()
                     esp.healthBar.Size = Vector2.new(2, height * health)
                     esp.healthBar.Position = Vector2.new(x - 6, y + height * (1 - health))
                     esp.healthBar.Color = Color3.new(1-health, health, 0)
-                else esp.healthBar.Visible = false end
-            else if esp.healthBar then esp.healthBar.Visible = false end end
+                else
+                    esp.healthBar.Visible = false
+                end
+            elseif esp.healthBar then
+                esp.healthBar.Visible = false
+            end
 
             if Settings.Visuals.ESP.Distance and esp.distance then
                 local dist = (Camera.CFrame.Position - hrp.Position).Magnitude
                 esp.distance.Visible = true
                 esp.distance.Text = string.format("%.0f", dist)
                 esp.distance.Position = Vector2.new(hrpPos.X, y + height + 5)
-            else if esp.distance then esp.distance.Visible = false end end
+            elseif esp.distance then
+                esp.distance.Visible = false
+            end
 
             if Settings.Visuals.ESP.Skeleton and esp.skeleton then
                 local bones = {
@@ -552,18 +243,28 @@ local function updateESP()
                                 esp.skeleton[i].Visible = true
                                 esp.skeleton[i].From = Vector2.new(s1.X, s1.Y)
                                 esp.skeleton[i].To = Vector2.new(s2.X, s2.Y)
-                            else esp.skeleton[i].Visible = false end
-                        else esp.skeleton[i].Visible = false end
+                            else
+                                esp.skeleton[i].Visible = false
+                            end
+                        else
+                            esp.skeleton[i].Visible = false
+                        end
                     end
                 end
-            else if esp.skeleton then for _,v in pairs(esp.skeleton) do v.Visible = false end end end
+            elseif esp.skeleton then
+                for _,v in pairs(esp.skeleton) do v.Visible = false end
+            end
         else
-            for _, v in pairs(esp) do if type(v)=="table" and v.Visible then v.Visible = false end end
+            if esp.box then esp.box.Visible = false end
+            if esp.name then esp.name.Visible = false end
+            if esp.healthBar then esp.healthBar.Visible = false end
+            if esp.distance then esp.distance.Visible = false end
+            if esp.skeleton then for _,v in pairs(esp.skeleton) do v.Visible = false end end
         end
     end
 end
 
--- Aimbot target acquisition
+--// Aimbot Target Acquisition
 local function getTarget()
     local closest = nil
     local closestDist = Settings.Aimbot.FOV
@@ -589,8 +290,26 @@ local function getTarget()
     return closest
 end
 
--- Camera Aimbot (non-silent)
-RunService.RenderStepped:Connect(function(delta)
+--// FOV Circle (Outline Only)
+local fovCircle = Drawing.new("Circle")
+fovCircle.Visible = false
+fovCircle.Color = Color3.new(1,0,0)
+fovCircle.Thickness = 1
+fovCircle.NumSides = 60
+fovCircle.Filled = false
+
+RunService.RenderStepped:Connect(function()
+    if Settings.Aimbot.Enabled then
+        fovCircle.Visible = true
+        fovCircle.Radius = Settings.Aimbot.FOV
+        fovCircle.Position = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+    else
+        fovCircle.Visible = false
+    end
+end)
+
+--// Camera Aimbot (Non-Silent)
+RunService.RenderStepped:Connect(function()
     if Settings.Aimbot.Enabled and not Settings.Aimbot.Silent then
         local target = getTarget()
         if target then
@@ -600,7 +319,7 @@ RunService.RenderStepped:Connect(function(delta)
             Camera.CFrame = Camera.CFrame:Lerp(newCF, smooth)
         end
     end
-    -- Silent aim: store target for remote hook
+    -- Update silent aim target
     if Settings.Aimbot.Enabled and Settings.Aimbot.Silent then
         SilentAimTarget = getTarget()
     else
@@ -608,15 +327,14 @@ RunService.RenderStepped:Connect(function(delta)
     end
 end)
 
--- Silent Aim: Hook weapon remote (ROBLOX RIVALS specific – CHANGE THIS REMOTE NAME)
+--// Silent Aim Hook (Roblox Rivals – adjust remote name)
 local function hookSilentAim()
-    -- Common remotes in Rivals: "FireBullet", "Shoot", "WeaponFire". Adjust to actual remote.
     for _, remote in pairs(getnilinstances()) do
         if remote:IsA("RemoteEvent") and (remote.Name == "FireBullet" or remote.Name == "Shoot" or remote.Name == "WeaponFire") then
             local old = hookfunction(remote.FireServer, function(self, ...)
                 local args = {...}
                 if SilentAimTarget and Settings.Aimbot.Enabled and Settings.Aimbot.Silent then
-                    -- Assume first argument is the target position
+                    -- Assume first argument is target position
                     args[1] = SilentAimTarget.Part.Position
                 end
                 return old(self, unpack(args))
@@ -625,14 +343,14 @@ local function hookSilentAim()
         end
     end
 end
-pcall(hookSilentAim)  -- Will fail silently if remote not found; use Dex Explorer to identify.
+pcall(hookSilentAim)
 
--- Triggerbot
+--// Triggerbot
 spawn(function()
     while task.wait(Settings.Aimbot.TriggerDelay) do
         if Settings.Aimbot.Triggerbot and Settings.Aimbot.Enabled then
             local target = getTarget()
-            if target and SilentAimTarget then
+            if target then
                 mouse1press()
                 task.wait(0.05)
                 mouse1release()
@@ -641,7 +359,7 @@ spawn(function()
     end
 end)
 
--- Controller Aim (Right Stick)
+--// Controller Aim (Right Stick)
 UserInputService.InputChanged:Connect(function(input)
     if Settings.Aimbot.UseController and (input.UserInputType == Enum.UserInputType.Gamepad1 or input.UserInputType == Enum.UserInputType.Gamepad2) then
         if input.KeyCode == Enum.KeyCode.Thumbstick2 then
@@ -652,7 +370,7 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
--- Chams
+--// Chams
 local chamHighlights = {}
 local function toggleChams(on)
     if on then
@@ -672,7 +390,7 @@ local function toggleChams(on)
     end
 end
 
--- Glow
+--// Glow
 local glowBillboards = {}
 local function toggleGlow(on)
     if on then
@@ -698,7 +416,7 @@ local function toggleGlow(on)
     end
 end
 
--- Radar
+--// Radar
 local radarGui = nil
 local function toggleRadar(on)
     if radarGui then radarGui:Destroy(); radarGui = nil end
@@ -741,7 +459,7 @@ local function toggleRadar(on)
     end)
 end
 
--- Anti-Aim (Desync)
+--// Anti-Aim (Desync)
 spawn(function()
     while task.wait() do
         if Settings.Misc.AntiAim and LocalPlayer.Character then
@@ -756,7 +474,7 @@ spawn(function()
     end
 end)
 
--- Auto Crouch
+--// Auto Crouch
 spawn(function()
     while task.wait() do
         if Settings.Misc.AutoCrouch and LocalPlayer.Character then
@@ -768,34 +486,78 @@ spawn(function()
     end
 end)
 
--- ESP render loop
+--// ESP Render Loop
 RunService.RenderStepped:Connect(function()
     if Settings.Visuals.ESP.Enabled then
         updateESP()
     end
 end)
 
--- FOV circle (NO FILL, just outline)
-local fovCircle = Drawing.new("Circle")
-fovCircle.Visible = false
-fovCircle.Color = Color3.new(1,0,0)
-fovCircle.Thickness = 1
-fovCircle.NumSides = 60
-fovCircle.Filled = false  -- explicitly set to false
-RunService.RenderStepped:Connect(function()
-    if Settings.Aimbot.Enabled then
-        fovCircle.Visible = true
-        fovCircle.Radius = Settings.Aimbot.FOV
-        fovCircle.Position = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
-    else
-        fovCircle.Visible = false
-    end
-end)
+--// ==================== WINDUI INTERFACE ====================
+local Window = WindUI:CreateWindow({
+    Title = "Rivals HvH | v2.0",
+    Folder = "rivals_hvh",
+    Icon = "solar:target-bold",
+    Theme = "Dark",
+    NewElements = true,
+    HideSearchBar = false,
+    OpenButton = {
+        Title = "Open HvH",
+        Enabled = true,
+        Draggable = true,
+        Scale = 0.5,
+    },
+    Topbar = {
+        Height = 44,
+        ButtonsType = "Mac",
+    },
+})
 
--- Initial load of default visuals
-pcall(toggleRadar, true)   -- start radar
-pcall(toggleChams, false)
-pcall(toggleGlow, false)
+-- Tabs
+local AimTab = Window:Tab({ Title = "Aimbot", Icon = "solar:target-bold", IconColor = Color3.fromRGB(255,0,0), Border = true })
+local ESPTab = Window:Tab({ Title = "ESP", Icon = "solar:eye-bold", IconColor = Color3.fromRGB(0,255,0), Border = true })
+local VisTab = Window:Tab({ Title = "Visuals", Icon = "solar:palette-bold", IconColor = Color3.fromRGB(0,150,255), Border = true })
+local MiscTab = Window:Tab({ Title = "Misc", Icon = "solar:settings-bold", IconColor = Color3.fromRGB(200,200,200), Border = true })
 
-print("// Roblox Rivals HvH Loaded! Check the remote name for Silent Aim if not working.")
-print("// Use Dex Explorer to find the correct weapon remote and update the hookSilentAim function.")
+--// Aimbot UI
+AimTab:Toggle({ Title = "Enable Aimbot", Value = false, Callback = function(v) Settings.Aimbot.Enabled = v end })
+AimTab:Toggle({ Title = "Silent Aim (Raycast)", Value = true, Callback = function(v) Settings.Aimbot.Silent = v end })
+AimTab:Toggle({ Title = "Triggerbot", Value = false, Callback = function(v) Settings.Aimbot.Triggerbot = v end })
+AimTab:Toggle({ Title = "Visibility Check", Value = true, Callback = function(v) Settings.Aimbot.VisibleCheck = v end })
+AimTab:Toggle({ Title = "Team Check", Value = true, Callback = function(v) Settings.Aimbot.TeamCheck = v end })
+AimTab:Toggle({ Title = "Use Controller (Right Stick)", Value = false, Callback = function(v) Settings.Aimbot.UseController = v end })
+
+AimTab:Slider({ Title = "FOV", Step = 10, Value = { Min = 10, Max = 500, Default = 200 }, Callback = function(v) Settings.Aimbot.FOV = v end })
+AimTab:Slider({ Title = "Smoothness", Step = 0.01, Value = { Min = 0.01, Max = 1, Default = 0.1 }, Callback = function(v) Settings.Aimbot.Smoothness = v end })
+AimTab:Slider({ Title = "Controller Sensitivity", Step = 0.1, Value = { Min = 0.1, Max = 2, Default = 0.5 }, Callback = function(v) Settings.Aimbot.ControllerSensitivity = v end })
+AimTab:Slider({ Title = "Trigger Delay", Step = 0.05, Value = { Min = 0.05, Max = 1, Default = 0.1 }, Callback = function(v) Settings.Aimbot.TriggerDelay = v end })
+
+AimTab:Dropdown({ Title = "Hit Part", Values = { "Head", "UpperTorso", "HumanoidRootPart" }, Value = "Head", Callback = function(v) Settings.Aimbot.HitPart = v end })
+
+--// ESP UI
+ESPTab:Toggle({ Title = "Enable ESP", Value = true, Callback = function(v) Settings.Visuals.ESP.Enabled = v end })
+ESPTab:Toggle({ Title = "Box", Value = true, Callback = function(v) Settings.Visuals.ESP.Box = v end })
+ESPTab:Toggle({ Title = "Name", Value = true, Callback = function(v) Settings.Visuals.ESP.Name = v end })
+ESPTab:Toggle({ Title = "Health Bar", Value = true, Callback = function(v) Settings.Visuals.ESP.HealthBar = v end })
+ESPTab:Toggle({ Title = "Distance", Value = true, Callback = function(v) Settings.Visuals.ESP.Distance = v end })
+ESPTab:Toggle({ Title = "Skeleton", Value = false, Callback = function(v) Settings.Visuals.ESP.Skeleton = v end })
+
+--// Visuals UI
+VisTab:Toggle({ Title = "Chams", Value = false, Callback = toggleChams })
+VisTab:Toggle({ Title = "Glow", Value = false, Callback = toggleGlow })
+VisTab:Toggle({ Title = "Night Mode", Value = false, Callback = function(v) Settings.Visuals.NightMode = v; Lighting.ClockTime = v and 0 or 14; Lighting.Brightness = v and 0.5 or 2 end })
+VisTab:Toggle({ Title = "Fullbright", Value = false, Callback = function(v) Settings.Visuals.Fullbright = v; Lighting.Ambient = v and Color3.new(1,1,1) or Color3.new(0,0,0) end })
+
+--// Misc UI
+MiscTab:Toggle({ Title = "Radar", Value = true, Callback = toggleRadar })
+MiscTab:Slider({ Title = "Radar Size", Step = 10, Value = { Min = 100, Max = 400, Default = 200 }, Callback = function(v) Settings.Misc.RadarSize = v; toggleRadar(Settings.Misc.Radar) end })
+MiscTab:Slider({ Title = "Radar Zoom", Step = 0.1, Value = { Min = 0.5, Max = 5, Default = 1 }, Callback = function(v) Settings.Misc.RadarZoom = v end })
+MiscTab:Toggle({ Title = "Anti-Aim (Desync)", Value = false, Callback = function(v) Settings.Misc.AntiAim = v end })
+MiscTab:Slider({ Title = "Desync Angle", Step = 5, Value = { Min = 0, Max = 90, Default = 45 }, Callback = function(v) Settings.Misc.DesyncAngle = v end })
+MiscTab:Toggle({ Title = "Auto Crouch", Value = false, Callback = function(v) Settings.Misc.AutoCrouch = v end })
+
+--// Start Radar on load
+pcall(function() toggleRadar(true) end)
+
+--// Notify
+WindUI:Notify({ Title = "Rivals HvH", Content = "Loaded! Use /dex to find weapon remote for Silent Aim." })
