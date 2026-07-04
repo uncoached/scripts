@@ -1,5 +1,5 @@
--- Build Exploit Pack – WindUI Edition (Fast Spammer)
--- Spammer now fills sphere instantly (no delay). Adjustable speed slider.
+-- Build Exploit Pack – WindUI Edition (Fast Spammer, Radius 13)
+-- Spammer fills a 13‑stud sphere instantly on toggle, then rapidly refills as you move.
 
 local WindUI = nil
 pcall(function()
@@ -28,8 +28,8 @@ player.CharacterAdded:Connect(onCharAdded)
 
 -- Remotes
 local events = game:GetService("ReplicatedStorage"):WaitForChild("Events")
-local placeRemote = events:WaitForChild("Place")          -- args: blockType, CFrame, Baseplate
-local destroyRemote = events:WaitForChild("DestroyBlock") -- args: partInstance
+local placeRemote = events:WaitForChild("Place")          -- (blockType, CFrame, Baseplate)
+local destroyRemote = events:WaitForChild("DestroyBlock") -- (part)
 local baseplate = workspace:WaitForChild("Baseplate", 10) or workspace
 local builtFolder = workspace:FindFirstChild("Built") or Instance.new("Folder", workspace)
 builtFolder.Name = "Built"
@@ -38,7 +38,7 @@ builtFolder.Name = "Built"
 getgenv().OldPos = nil
 getgenv().FPDH = workspace.FallenPartsDestroyHeight
 
--- Thread tracking
+-- Thread management
 local activeFeatures = {}
 local function stopFeature(name)
     if activeFeatures[name] then
@@ -56,7 +56,7 @@ local function startFeature(name, loopFunc)
     activeFeatures[name] = { thread = thread, running = flag }
 end
 
--- Place block helper – exact CFrame as required
+-- Place block helper – exact CFrame (0,0,1,0,1,0,-1,0,0)
 local function placeBlock(blockType, pos)
     local bp = workspace:FindFirstChild("Baseplate") or workspace
     local roundedPos = Vector3.new(math.round(pos.X), math.round(pos.Y), math.round(pos.Z))
@@ -89,7 +89,7 @@ local function destroyAllParts(folder)
     end
 end
 
--- Fling function (unchanged)
+-- Fling function
 local function SkidFling(TargetPlayer, flag)
     local Character = character
     local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
@@ -519,45 +519,52 @@ AuraTab:Slider({ Title = "Speed", Step = 0.01, Value = { Min = 0.05, Max = 1, De
 AuraTab:Slider({ Title = "Clear Dist", Step = 1, Value = { Min = 5, Max = 50, Default = 20 }, Callback = function(v) auraClear = v end })
 AuraTab:Slider({ Title = "Orbit Dist", Step = 1, Value = { Min = 5, Max = 50, Default = 20 }, Callback = function(v) auraOrbit = v end })
 
--- SPAMMER TAB (FAST)
+-- SPAMMER TAB (FAST, RADIUS 13)
 local SpammerTab = Window:Tab({ Title = "Spammer", Icon = "solar:layers-bold" })
-local spamDelay = 0    -- no delay between placements
+local spamDelay = 0      -- delay between blocks (0 = instant)
 SpammerTab:Toggle({
-    Title = "Block Spammer (Sphere Fill)",
+    Title = "Sphere Fill (r=13)",
     Callback = function(state)
         if state then
             startFeature("spammer", function(flag)
-                local radius = 10
+                local radius = 13
                 while flag.running do
                     if character and character.PrimaryPart then
                         local center = character.PrimaryPart.Position
+                        -- Collect all valid positions in this sphere
+                        local positions = {}
                         for x = -radius, radius do
-                            if not flag.running then break end
                             for y = -radius, radius do
-                                if not flag.running then break end
                                 for z = -radius, radius do
-                                    if not flag.running then break end
                                     local pos = Vector3.new(center.X+x, center.Y+y, center.Z+z)
                                     if (pos - center).Magnitude <= radius then
-                                        placeBlock("Glass", pos)
-                                        if spamDelay > 0 then task.wait(spamDelay) end
+                                        table.insert(positions, pos)
                                     end
                                 end
                             end
                         end
-                        task.wait()  -- yield a frame between fills (very fast)
+                        -- Place blocks as fast as possible
+                        for _, pos in ipairs(positions) do
+                            if not flag.running then return end
+                            placeBlock("Glass", pos)
+                            if spamDelay > 0 then task.wait(spamDelay) end
+                        end
+                        -- After filling the sphere, yield to avoid script timeout
+                        task.wait()
                     else
-                        task.wait(1)
+                        task.wait(0.5)
                     end
                 end
             end)
-        else stopFeature("spammer") end
+        else
+            stopFeature("spammer")
+        end
     end,
 })
 SpammerTab:Slider({
     Title = "Delay (s)",
     Step = 0.001,
-    Value = { Min = 0, Max = 0.5, Default = 0 },
+    Value = { Min = 0, Max = 0.1, Default = 0 },
     Callback = function(v) spamDelay = v end,
 })
 
@@ -681,5 +688,5 @@ Window:Button({
     end,
 })
 
-WindUI:Notify({ Title = "Build Exploit Pack", Content = "Fast spammer ready!" })
+WindUI:Notify({ Title = "Build Exploit Pack", Content = "Fast spammer (r=13) ready!" })
 print("Build Exploit Pack – Fast Spammer Loaded.")
