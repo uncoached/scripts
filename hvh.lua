@@ -1,616 +1,280 @@
---// Universal HvH Script (WindUI) – Viewport Aim + Raycast Silent Aim
---// Full ESP (Box, Name, Health, Distance, Skeleton [R6/R15], Tracers)
---// Works in most Roblox FPS games. Auto‑detects common weapon remotes.
---// All exploit functions are checked before use – no crashes.
+local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
 
-local WindUI = nil
-local function loadWindUI()
-    local ok, result = pcall(function()
-        if game:GetService("RunService"):IsStudio() then
-            return require(game:GetService("ReplicatedStorage"):WaitForChild("WindUI"):WaitForChild("Init"))
-        else
-            return loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
-        end
-    end)
-    if ok then WindUI = result end
-end
-loadWindUI()
-if not WindUI then return end
+local Window = Rayfield:CreateWindow({
+    Name = "Legend Hub | [FPS] Passeio",
+    LoadingTitle = "Loading Script...",
+    LoadingSubtitle = "By DarkHub",
+    ConfigurationSaving = {Enabled = false},
+    Discord = {Enabled = false},
+    KeySystem = false,
 
--- Services
+    Theme = {
+        -- Fundo neon com efeito "profundidade roxa"
+        Background = Color3.fromRGB(14, 0, 20),   -- Roxo quase preto
+        
+        -- Topo com brilho neon roxo
+        Topbar = Color3.fromRGB(120, 0, 255),     -- Roxo neon brilhante
+        Shadow = Color3.fromRGB(170, 0, 255),     -- Glow neon
+
+        -- Acentos neon vibrantes
+        Accent = Color3.fromRGB(200, 0, 255),     -- Roxo neon forte
+        AccentLight = Color3.fromRGB(255, 90, 255), -- Neon claro, quase rosa-lilás
+
+        -- Bordas e traços
+        Border = Color3.fromRGB(255, 255, 255),   -- Branco puro (contraste)
+        UIStroke = Color3.fromRGB(255, 0, 255),   -- Traço neon
+
+        -- Texto neon
+        Text = Color3.fromRGB(255, 210, 255),     -- Neon lilás claro
+        TextDark = Color3.fromRGB(210, 160, 230)  -- Lilás suave
+    }
+})
+
+-- === Aimbot Variables ===
+getgenv().AimbotOn = false
+local FOV = 120
+
 local Players = game:GetService("Players")
-local UIS = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
-local Workspace = game:GetService("Workspace")
-local Camera = Workspace.CurrentCamera
-local Lighting = game:GetService("Lighting")
 local LocalPlayer = Players.LocalPlayer
-local RS = game:GetService("ReplicatedStorage")
+local Camera = workspace.CurrentCamera
+local RunService = game:GetService("RunService")
 
--- Settings
-local Settings = {
-    Aimbot = {
-        Enabled = false,
-        CameraAim = false,           -- viewport aim (mouse movement)
-        Silent = true,               -- raycast silent aim
-        FOV = 200,
-        ShowFOV = true,
-        Smoothness = 0.1,
-        HitPart = "Head",
-        VisibleCheck = true,
-        TeamCheck = false,
-        AimKey = Enum.UserInputType.MouseButton2,
-    },
-    Triggerbot = {
-        Enabled = false,
-        Delay = 0,
-    },
-    Hitbox = {
-        Enabled = false,
-        Size = 3,
-    },
-    ESP = {
-        Enabled = false,
-        Box = true,
-        Name = true,
-        HealthBar = true,
-        Distance = true,
-        Tracers = true,
-        Skeleton = true,
-    },
-    Bhop = false,
-    AntiFlash = false,
-    AntiSmoke = false,
-    Controller = {
-        Enabled = false,
-        Sensitivity = 0.5,
-    },
-    SilentAimRemote = "FireBullet",
-}
+-- Only track current (locked) target to not "soltar" ao entrar na FOV
+local CurrentTarget = nil
 
--- Drawing library
-local Drawing = nil
-pcall(function()
-    Drawing = loadstring(game:HttpGet("https://raw.githubusercontent.com/Insei/PenisMan/refs/heads/main/DrawingLib.lua"))()
-end)
-if not Drawing then pcall(function() Drawing = { new = function() return {} end } end) end
-
--- FOV circle (outline)
-local FOVCircle = Drawing.new("Circle")
-FOVCircle.Visible = false
-FOVCircle.Filled = false
-FOVCircle.Color = Color3.fromRGB(255,255,255)
-FOVCircle.Thickness = 1
-
--- Silent aim target
-local SilentAimTarget = nil
-
--- ================= UTILITY FUNCTIONS =================
-local function getCharacter(player) return player.Character end
-local function getHead(char) return char and char:FindFirstChild("Head") end
-local function getHRP(char) return char and char:FindFirstChild("HumanoidRootPart") end
-local function getHumanoid(char) return char and char:FindFirstChildWhichIsA("Humanoid") end
-local function teamCheck(player)
-    if not Settings.Aimbot.TeamCheck then return false end
-    return player.Team == LocalPlayer.Team
-end
-local function isVisible(part)
-    local origin = Camera.CFrame.Position
-    local dir = (part.Position - origin).Unit * 1000
-    local ray = Ray.new(origin, dir)
-    local hit = Workspace:FindPartOnRay(ray, LocalPlayer.Character, false, true)
-    return hit and hit:IsDescendantOf(part.Parent)
-end
-
--- ================= AIMBOT TARGET ACQUISITION =================
-local function getClosestEnemy()
-    local closest = nil
-    local closestDist = Settings.Aimbot.FOV
-    local center = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
-
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player == LocalPlayer or teamCheck(player) then continue end
-        local char = player.Character
-        if not char then continue end
-        local hum = getHumanoid(char)
-        if not hum or hum.Health <= 0 then continue end
-
-        local part
-        if Settings.Aimbot.HitPart == "Head" then part = getHead(char)
-        elseif Settings.Aimbot.HitPart == "UpperTorso" then part = char:FindFirstChild("UpperTorso")
-        else part = getHRP(char) end
-        if not part then continue end
-
-        local pos, onScreen = Camera:WorldToViewportPoint(part.Position)
-        if not onScreen then continue end
-        local dist = (Vector2.new(pos.X, pos.Y) - center).Magnitude
-        if dist < closestDist then
-            if Settings.Aimbot.VisibleCheck and not isVisible(part) then continue end
-            closestDist = dist
-            closest = part
+local function GetClosestHeadVisible()
+    local closest, shortest = nil, math.huge
+    local screenCenter = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+    for _,p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and p.Character and p.Character:FindFirstChild("Head") then
+            local head = p.Character.Head
+            local pos, onScreen = Camera:WorldToViewportPoint(head.Position)
+            if onScreen then
+                local dist = (Vector2.new(pos.X, pos.Y) - screenCenter).Magnitude
+                if dist < shortest and dist <= FOV then
+                    -- Wallcheck
+                    local origin = Camera.CFrame.Position
+                    local direction = (head.Position - origin)
+                    local rayParams = RaycastParams.new()
+                    rayParams.FilterDescendantsInstances = {LocalPlayer.Character}
+                    rayParams.FilterType = Enum.RaycastFilterType.Blacklist
+                    rayParams.IgnoreWater = true
+                    local result = workspace:Raycast(origin, direction)
+                    if result and result.Instance == head then
+                        shortest = dist
+                        closest = head
+                    end
+                end
+            end
         end
     end
     return closest
 end
 
--- ================= AIM KEY HANDLING =================
-local isAiming = false
-UIS.InputBegan:Connect(function(input)
-    if input.UserInputType == Settings.Aimbot.AimKey then isAiming = true end
-end)
-UIS.InputEnded:Connect(function(input)
-    if input.UserInputType == Settings.Aimbot.AimKey then isAiming = false end
-end)
-
--- ================= RENDER LOOP (FOV + CAMERA AIM + TARGET STORAGE) =================
+-- Mantém o alvo atual (lock) até ele morrer, sumir da tela ou ficar atrás da parede
 RunService.RenderStepped:Connect(function()
-    -- FOV circle visibility
-    if Settings.Aimbot.Enabled and Settings.Aimbot.ShowFOV then
-        FOVCircle.Position = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
-        FOVCircle.Radius = Settings.Aimbot.FOV
-        FOVCircle.Visible = true
+    if getgenv().AimbotOn then
+        -- Se não tem alvo lockado, pega um novo
+        if not (CurrentTarget and CurrentTarget.Parent and CurrentTarget.Parent:FindFirstChildOfClass("Humanoid") and CurrentTarget.Parent:FindFirstChild("Head")) then
+            CurrentTarget = GetClosestHeadVisible()
+        end
+        -- Se alvo lockado saiu do FOV, morreu, ou sumiu, procurar outro
+        if CurrentTarget then
+            local pos, onScreen = Camera:WorldToViewportPoint(CurrentTarget.Position)
+            local alive = (CurrentTarget.Parent:FindFirstChildOfClass("Humanoid") and CurrentTarget.Parent.Humanoid.Health > 0)
+            -- Wallcheck a cada frame
+            local origin = Camera.CFrame.Position
+            local direction = (CurrentTarget.Position - origin)
+            local rayParams = RaycastParams.new()
+            rayParams.FilterDescendantsInstances = {LocalPlayer.Character}
+            rayParams.FilterType = Enum.RaycastFilterType.Blacklist
+            rayParams.IgnoreWater = true
+            local result = workspace:Raycast(origin, direction)
+            local wallpass = (result and result.Instance == CurrentTarget)
+            -- Se morreu, someu, parede, ou saiu do FOV, procura novo alvo
+            if not onScreen or not alive or not wallpass then
+                CurrentTarget = GetClosestHeadVisible()
+                -- Se não encontrou ninguém, simplesmente não faz nada neste frame
+            end
+            -- Só mira se o alvo atende todos critérios
+            if CurrentTarget then
+                Camera.CFrame = CFrame.new(Camera.CFrame.Position, CurrentTarget.Position)
+            end
+        end
     else
-        FOVCircle.Visible = false
-    end
-
-    if not Settings.Aimbot.Enabled then
-        SilentAimTarget = nil
-        return
-    end
-
-    local target = getClosestEnemy()
-    SilentAimTarget = (Settings.Aimbot.Silent and target) or nil
-
-    -- Viewport/camera aimbot
-    if Settings.Aimbot.CameraAim and isAiming and target then
-        local targetPos = Camera:WorldToViewportPoint(target.Position)
-        local mousePos = UIS:GetMouseLocation()
-        local moveX = (targetPos.X - mousePos.X) / (Settings.Aimbot.Smoothness * 5)
-        local moveY = (targetPos.Y - mousePos.Y) / (Settings.Aimbot.Smoothness * 5)
-        if mousemoverel then mousemoverel(moveX, moveY) end
+        -- Se desativar, limpa o lock
+        CurrentTarget = nil
     end
 end)
 
--- ================= SILENT AIM HOOK =================
-local function hookSilentAim(remoteName)
-    local function findRemote(name)
-        for _, remote in ipairs(RS:GetDescendants()) do
-            if remote:IsA("RemoteEvent") and remote.Name == name then
-                return remote
-            end
-        end
-        return nil
-    end
+-- === GUI Aimbot ===
+local TabAimbot = Window:CreateTab("Aimbot")
+TabAimbot:CreateSection("Aimbot (Head Lock, WallCheck, Lock Automático)")
 
-    local remote = findRemote(remoteName)
-    if not remote then
-        for _, name in ipairs({"FireBullet", "Shoot", "WeaponFire", "Fire", "RaycastHit"}) do
-            remote = findRemote(name)
-            if remote then break end
-        end
-    end
-
-    if remote then
-        local oldFire = hookfunction(remote.FireServer, function(self, ...)
-            local args = {...}
-            if SilentAimTarget and Settings.Aimbot.Enabled and Settings.Aimbot.Silent then
-                args[1] = SilentAimTarget.Position
-            end
-            return oldFire(self, unpack(args))
-        end)
-        return true
-    end
-    return false
-end
-
-local silentAimHooked = false
-pcall(function() silentAimHooked = hookSilentAim(Settings.SilentAimRemote) end)
-
--- ================= TRIGGERBOT =================
-task.spawn(function()
-    while task.wait(0.01) do
-        if Settings.Triggerbot.Enabled then
-            local viewportSize = Camera.ViewportSize
-            local ray = Camera:ViewportPointToRay(viewportSize.X/2, viewportSize.Y/2)
-            local params = RaycastParams.new()
-            params.FilterType = Enum.RaycastFilterType.Exclude
-            local ignore = {Camera}
-            if LocalPlayer.Character then table.insert(ignore, LocalPlayer.Character) end
-            params.FilterDescendantsInstances = ignore
-
-            local result = Workspace:Raycast(ray.Origin, ray.Direction * 1000, params)
-            if result and result.Instance then
-                local model = result.Instance:FindFirstAncestorOfClass("Model")
-                if model then
-                    local hum = model:FindFirstChildOfClass("Humanoid")
-                    if hum and hum.Health > 0 then
-                        local plr = Players:GetPlayerFromCharacter(model)
-                        if plr and plr ~= LocalPlayer and not teamCheck(plr) then
-                            if Settings.Triggerbot.Delay > 0 then task.wait(Settings.Triggerbot.Delay/1000) end
-                            if mouse1click then mouse1click() end
-                            task.wait(0.05)
-                        end
-                    end
-                end
-            end
-        end
-    end
-end)
-
--- ================= HITBOX EXPANDER =================
-local originalHeadSizes = {}
-task.spawn(function()
-    while task.wait(0.5) do
-        for _, player in ipairs(Players:GetPlayers()) do
-            if player == LocalPlayer or teamCheck(player) then continue end
-            local char = player.Character
-            if char then
-                local head = getHead(char)
-                local hum = getHumanoid(char)
-                if head and hum and hum.Health > 0 then
-                    if not originalHeadSizes[head] then originalHeadSizes[head] = head.Size end
-                    if Settings.Hitbox.Enabled then
-                        head.Size = Vector3.new(Settings.Hitbox.Size, Settings.Hitbox.Size, Settings.Hitbox.Size)
-                        head.CanCollide = false
-                        head.Transparency = 0.5
-                    else
-                        if originalHeadSizes[head] then
-                            head.Size = originalHeadSizes[head]
-                            head.Transparency = 0
-                        end
-                    end
-                end
-            end
-        end
-    end
-end)
-
--- ================= BUNNY HOP =================
-RunService.RenderStepped:Connect(function()
-    if Settings.Bhop and UIS:IsKeyDown(Enum.KeyCode.Space) then
-        local char = LocalPlayer.Character
-        if char then
-            local hum = char:FindFirstChildOfClass("Humanoid")
-            if hum and hum:GetState() ~= Enum.HumanoidStateType.Jumping and hum:GetState() ~= Enum.HumanoidStateType.Freefall then
-                hum.Jump = true
-            end
-        end
-    end
-end)
-
--- ================= ESP (Full: Box, Name, Health, Distance, Tracers, Skeleton for R6/R15) =================
-local espCache = {}
-
--- Helper: return bone positions for R6 and R15
-local function getBonePositions(char)
-    local bones = {}
-    -- Common bones
-    local head = char:FindFirstChild("Head")
-    local torso = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
-    local leftArm = char:FindFirstChild("LeftUpperArm") or char:FindFirstChild("Left Arm")
-    local rightArm = char:FindFirstChild("RightUpperArm") or char:FindFirstChild("Right Arm")
-    local leftLeg = char:FindFirstChild("LeftUpperLeg") or char:FindFirstChild("Left Leg")
-    local rightLeg = char:FindFirstChild("RightUpperLeg") or char:FindFirstChild("Right Leg")
-
-    local function pos(part) return part and part.Position end
-
-    if head and torso then
-        bones.Head = pos(head)
-        bones.Torso = pos(torso)
-        bones.LeftArm = pos(leftArm) or bones.Torso
-        bones.RightArm = pos(rightArm) or bones.Torso
-        bones.LeftLeg = pos(leftLeg) or (bones.Torso - Vector3.new(0,2,0))
-        bones.RightLeg = pos(rightLeg) or (bones.Torso - Vector3.new(0,2,0))
-    end
-    return bones
-end
-
-local function createESPobj()
-    local esp = {
-        boxOutline = Drawing.new("Square"),
-        box = Drawing.new("Square"),
-        name = Drawing.new("Text"),
-        distance = Drawing.new("Text"),
-        healthOutline = Drawing.new("Line"),
-        healthBar = Drawing.new("Line"),
-        tracer = Drawing.new("Line"),
-        skeletonLines = {},
-    }
-    esp.boxOutline.Thickness = 3; esp.boxOutline.Filled = false; esp.boxOutline.Color = Color3.new(0,0,0)
-    esp.box.Thickness = 1; esp.box.Filled = false; esp.box.Color = Color3.fromRGB(255,50,50)
-    esp.name.Center = true; esp.name.Outline = true; esp.name.Color = Color3.new(1,1,1); esp.name.Size = 16
-    esp.distance.Center = true; esp.distance.Outline = true; esp.distance.Color = Color3.new(0.8,0.8,0.8); esp.distance.Size = 13
-    esp.healthOutline.Thickness = 3; esp.healthOutline.Color = Color3.new(0,0,0)
-    esp.healthBar.Thickness = 1; esp.healthBar.Color = Color3.new(0,1,0)
-    esp.tracer.Thickness = 1; esp.tracer.Color = Color3.fromRGB(255,255,255); esp.tracer.Visible = false
-    return esp
-end
-
-local function updateSkeleton(esp, bones)
-    -- Clear old skeleton
-    for _, line in ipairs(esp.skeletonLines) do line:Remove() end
-    esp.skeletonLines = {}
-    if not bones then return end
-
-    local bonePairs = {
-        {"Head", "Torso"},
-        {"Torso", "LeftArm"},
-        {"Torso", "RightArm"},
-        {"Torso", "LeftLeg"},
-        {"Torso", "RightLeg"},
-    }
-
-    for _, pair in ipairs(bonePairs) do
-        local b1 = bones[pair[1]]
-        local b2 = bones[pair[2]]
-        if b1 and b2 then
-            local s1, o1 = Camera:WorldToViewportPoint(b1)
-            local s2, o2 = Camera:WorldToViewportPoint(b2)
-            if o1 and o2 then
-                local line = Drawing.new("Line")
-                line.From = Vector2.new(s1.X, s1.Y)
-                line.To = Vector2.new(s2.X, s2.Y)
-                line.Color = Color3.fromRGB(255,255,255)
-                line.Thickness = 1
-                line.Visible = true
-                table.insert(esp.skeletonLines, line)
-            end
-        end
-    end
-end
-
-RunService.RenderStepped:Connect(function()
-    if not Settings.ESP.Enabled then
-        for _, e in pairs(espCache) do
-            e.boxOutline.Visible = false; e.box.Visible = false
-            e.name.Visible = false; e.distance.Visible = false
-            e.healthOutline.Visible = false; e.healthBar.Visible = false
-            e.tracer.Visible = false
-            for _, line in ipairs(e.skeletonLines) do line.Visible = false end
-        end
-        return
-    end
-
-    local aliveSet = {}
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player == LocalPlayer or teamCheck(player) then continue end
-        local char = player.Character
-        if not char then continue end
-        local hum = getHumanoid(char)
-        local root = getHRP(char)
-        local head = getHead(char)
-        if hum and hum.Health > 0 and root and head then
-            aliveSet[player] = true
-            if not espCache[player] then espCache[player] = createESPobj() end
-            local esp = espCache[player]
-            local rootPos, onScreen = Camera:WorldToViewportPoint(root.Position)
-            local headPos = Camera:WorldToViewportPoint(head.Position + Vector3.new(0,0.5,0))
-            local legPos = Camera:WorldToViewportPoint(root.Position - Vector3.new(0,3,0))
-            if onScreen then
-                local boxH = math.abs(headPos.Y - legPos.Y)
-                local boxW = boxH / 2
-                local dist = math.floor((Camera.CFrame.Position - root.Position).Magnitude)
-
-                -- Box
-                if Settings.ESP.Box then
-                    esp.boxOutline.Size = Vector2.new(boxW, boxH); esp.boxOutline.Position = Vector2.new(rootPos.X - boxW/2, headPos.Y); esp.boxOutline.Visible = true
-                    esp.box.Size = esp.boxOutline.Size; esp.box.Position = esp.boxOutline.Position; esp.box.Visible = true
-                else
-                    esp.boxOutline.Visible = false; esp.box.Visible = false
-                end
-
-                -- Health bar
-                if Settings.ESP.HealthBar then
-                    local hpPct = hum.Health / hum.MaxHealth
-                    local barX = rootPos.X - boxW/2 - 6
-                    esp.healthOutline.From = Vector2.new(barX, headPos.Y - 1); esp.healthOutline.To = Vector2.new(barX, headPos.Y + boxH + 1); esp.healthOutline.Visible = true
-                    esp.healthBar.From = Vector2.new(barX, headPos.Y + boxH); esp.healthBar.To = Vector2.new(barX, headPos.Y + boxH - (boxH * hpPct))
-                    esp.healthBar.Color = Color3.new(1 - hpPct, hpPct, 0); esp.healthBar.Visible = true
-                else
-                    esp.healthOutline.Visible = false; esp.healthBar.Visible = false
-                end
-
-                -- Name
-                esp.name.Text = Settings.ESP.Name and player.Name or ""; esp.name.Position = Vector2.new(rootPos.X, headPos.Y - 20); esp.name.Visible = Settings.ESP.Name
-
-                -- Distance
-                esp.distance.Text = Settings.ESP.Distance and ("[" .. dist .. "m]") or ""; esp.distance.Position = Vector2.new(rootPos.X, headPos.Y + boxH + 2); esp.distance.Visible = Settings.ESP.Distance
-
-                -- Tracers
-                if Settings.ESP.Tracers then
-                    esp.tracer.From = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y)
-                    esp.tracer.To = Vector2.new(rootPos.X, rootPos.Y)
-                    esp.tracer.Visible = true
-                else
-                    esp.tracer.Visible = false
-                end
-
-                -- Skeleton
-                if Settings.ESP.Skeleton then
-                    local bones = getBonePositions(char)
-                    updateSkeleton(esp, bones)
-                else
-                    for _, line in ipairs(esp.skeletonLines) do line:Remove() end
-                    esp.skeletonLines = {}
-                end
-            else
-                esp.boxOutline.Visible = false; esp.box.Visible = false
-                esp.name.Visible = false; esp.distance.Visible = false
-                esp.healthOutline.Visible = false; esp.healthBar.Visible = false
-                esp.tracer.Visible = false
-                for _, line in ipairs(esp.skeletonLines) do line.Visible = false end
-            end
-        end
-    end
-
-    -- Cleanup dead players
-    for plr, esp in pairs(espCache) do
-        if not aliveSet[plr] then
-            esp.boxOutline:Remove(); esp.box:Remove(); esp.name:Remove(); esp.distance:Remove()
-            esp.healthOutline:Remove(); esp.healthBar:Remove(); esp.tracer:Remove()
-            for _, line in ipairs(esp.skeletonLines) do line:Remove() end
-            espCache[plr] = nil
-        end
-    end
-end)
-
--- ================= ANTI-FLASH & ANTI-SMOKE =================
-task.spawn(function()
-    while task.wait(0.2) do
-        if Settings.AntiFlash then
-            local gui = LocalPlayer.PlayerGui:FindFirstChild("FlashbangEffect")
-            local effect = Lighting:FindFirstChild("FlashbangColorCorrection")
-            if gui then gui:Destroy() end
-            if effect then effect:Destroy() end
-        end
-    end
-end)
-task.spawn(function()
-    while task.wait(0.5) do
-        if Settings.AntiSmoke then
-            local debris = Workspace:FindFirstChild("Debris")
-            if debris then
-                for _, folder in pairs(debris:GetChildren()) do
-                    if string.match(folder.Name, "Voxel") then folder:ClearAllChildren(); folder:Destroy() end
-                end
-            end
-        end
-    end
-end)
-
--- ================= CONTROLLER AIM =================
-UIS.InputChanged:Connect(function(input)
-    if Settings.Controller.Enabled and (input.UserInputType == Enum.UserInputType.Gamepad1 or input.UserInputType == Enum.UserInputType.Gamepad2) then
-        if input.KeyCode == Enum.KeyCode.Thumbstick2 then
-            local delta = input.Delta
-            local sens = Settings.Controller.Sensitivity * 5
-            if mousemoverel then mousemoverel(math.floor(delta.X * sens), math.floor(delta.Y * -sens)) end
-        end
-    end
-end)
-
--- ================= WINDUI INTERFACE =================
-local Window = WindUI:CreateWindow({
-    Title = "Universal HvH",
-    Folder = "universal_hvh",
-    Icon = "solar:target-bold",
-    OpenButton = { Title = "Open HvH", Enabled = true, Scale = 0.5 },
+TabAimbot:CreateToggle({
+    Name = "Aimbot",
+    CurrentValue = false,
+    Callback = function(Value)
+        getgenv().AimbotOn = Value
+        if not Value then CurrentTarget = nil end
+    end,
 })
+TabAimbot:CreateSlider({
+    Name = "FOV",
+    Range = {30, 300},
+    Increment = 1,
+    Suffix = "FOV",
+    CurrentValue = FOV,
+    Callback = function(Value) FOV = Value end,
+})
+TabAimbot:CreateSection("Wallcheck sempre ligado (não mira atrás de parede)")
 
--- Tabs
-local Tab_Aim = Window:Tab({ Title = "Aimbot", Icon = "solar:target-bold" })
-local Tab_ESP = Window:Tab({ Title = "ESP", Icon = "solar:eye-bold" })
-local Tab_Trig = Window:Tab({ Title = "Triggerbot", Icon = "solar:mouse-bold" })
-local Tab_Hit = Window:Tab({ Title = "Hitbox", Icon = "solar:size-bold" })
-local Tab_World = Window:Tab({ Title = "World", Icon = "solar:globus-bold" })
-local Tab_Move = Window:Tab({ Title = "Movement", Icon = "solar:run-bold" })
-local Tab_Ctrl = Window:Tab({ Title = "Controller", Icon = "solar:gamepad-bold" })
-local Tab_Misc = Window:Tab({ Title = "Misc", Icon = "solar:settings-bold" })
+-- === Categoria ESPs ===
+local Drawing = Drawing
+local TabESP = Window:CreateTab("ESPs")
+TabESP:CreateSection("Visuals")
 
--- Aimbot sections
-do
-    local Section1 = Tab_Aim:Section({ Title = "Main" })
-    Section1:Toggle({ Title = "Enable Aimbot", Value = false, Callback = function(v) Settings.Aimbot.Enabled = v end })
-    Section1:Toggle({ Title = "Camera Aimbot (Viewport)", Value = false, Callback = function(v) Settings.Aimbot.CameraAim = v end })
-    Section1:Toggle({ Title = "Silent Aim (Raycast)", Value = true, Callback = function(v) Settings.Aimbot.Silent = v end })
-    Section1:Toggle({ Title = "Show FOV Circle", Value = true, Callback = function(v) Settings.Aimbot.ShowFOV = v end })
-    Section1:Toggle({ Title = "Visibility Check", Value = true, Callback = function(v) Settings.Aimbot.VisibleCheck = v end })
-    Section1:Toggle({ Title = "Team Check", Value = false, Callback = function(v) Settings.Aimbot.TeamCheck = v end })
-    Section1:Slider({ Title = "FOV", Step = 10, Value = { Min = 10, Max = 500, Default = 200 }, Callback = function(v) Settings.Aimbot.FOV = v end })
-    Section1:Slider({ Title = "Smoothness", Step = 0.1, Value = { Min = 0.1, Max = 1, Default = 0.1 }, Callback = function(v) Settings.Aimbot.Smoothness = v end })
-    Section1:Dropdown({ Title = "Hit Part", Values = { "Head", "UpperTorso", "HumanoidRootPart" }, Value = "Head", Callback = function(v) Settings.Aimbot.HitPart = v end })
-    Section1:Dropdown({ Title = "Aim Key", Values = { "Right Mouse", "Left Mouse", "E", "Q" }, Value = "Right Mouse", Callback = function(v)
-        if v == "Right Mouse" then Settings.Aimbot.AimKey = Enum.UserInputType.MouseButton2
-        elseif v == "Left Mouse" then Settings.Aimbot.AimKey = Enum.UserInputType.MouseButton1
-        else Settings.Aimbot.AimKey = Enum.KeyCode[v] end
-    end })
+local ESPBoxEnabled, ESPVidaEnabled, ESPLineEnabled = false, false, false
+local EspObjects = {}
 
-    local Section2 = Tab_Aim:Section({ Title = "Silent Aim Remote" })
-    Section2:Input({ Title = "Remote Name", Value = "FireBullet", Placeholder = "e.g. FireBullet", Callback = function(v)
-        Settings.SilentAimRemote = v
-        local ok = pcall(function() silentAimHooked = hookSilentAim(v) end)
-        if not ok or not silentAimHooked then
-            WindUI:Notify({ Title = "Error", Content = "Remote not found.", Duration = 3 })
-        else
-            WindUI:Notify({ Title = "Success", Content = "Silent aim hooked!", Duration = 2 })
+function ClearESP()
+    for plr,objs in pairs(EspObjects) do
+        for _,obj in pairs(objs) do
+            if obj and obj.Remove then pcall(function() obj:Remove() end) end
         end
-    end })
-    Section2:Button({ Title = "Auto-Detect Remote", Callback = function()
-        local names = {"FireBullet", "Shoot", "WeaponFire", "Fire", "RaycastHit", "ShootEvent"}
-        for _, name in ipairs(names) do
-            local ok = pcall(function() silentAimHooked = hookSilentAim(name) end)
-            if ok and silentAimHooked then
-                Settings.SilentAimRemote = name
-                WindUI:Notify({ Title = "Detected", Content = "Hooked: " .. name, Duration = 3 })
-                return
+    end
+    EspObjects = {}
+end
+
+function EnableESP()
+    RunService:UnbindFromRenderStep("FPSPasseioESP")
+    RunService:BindToRenderStep("FPSPasseioESP", 199, function()
+        if not (ESPBoxEnabled or ESPLineEnabled or ESPVidaEnabled) then
+            ClearESP(); return
+        end
+        for _,plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") and plr.Character:FindFirstChildOfClass("Humanoid") then
+                local hrp = plr.Character.HumanoidRootPart
+                local hum = plr.Character:FindFirstChildOfClass("Humanoid")
+                local head = plr.Character:FindFirstChild("Head")
+                if not EspObjects[plr] then
+                    EspObjects[plr] = {
+                        Box = Drawing.new("Square"),
+                        Line = Drawing.new("Line"),
+                        LifeBar = Drawing.new("Square"),
+                        LifeFill = Drawing.new("Square"),
+                    }
+                    -- box
+                    EspObjects[plr].Box.Thickness = 2
+                    EspObjects[plr].Box.Color = Color3.fromRGB(0,255,0)
+                    EspObjects[plr].Box.Filled = false
+                    EspObjects[plr].Box.Visible = false
+                    -- line
+                    EspObjects[plr].Line.Color = Color3.fromRGB(0,255,0)
+                    EspObjects[plr].Line.Thickness = 2
+                    EspObjects[plr].Line.Visible = false
+                    -- lifebar
+                    EspObjects[plr].LifeBar.Filled = true
+                    EspObjects[plr].LifeBar.Color = Color3.fromRGB(0,0,0)
+                    EspObjects[plr].LifeBar.Transparency = 0.9
+                    EspObjects[plr].LifeBar.Visible = false
+                    -- lifefill
+                    EspObjects[plr].LifeFill.Filled = true
+                    EspObjects[plr].LifeFill.Transparency = 0.7
+                    EspObjects[plr].LifeFill.ZIndex = 2
+                    EspObjects[plr].LifeFill.Visible = false
+                end
+                -- BOX bounds
+                local size3 = hrp.Size * 1.5
+                local min = hrp.Position - Vector3.new(size3.X/2, size3.Y/2, size3.Z/2)
+                local max = hrp.Position + Vector3.new(size3.X/2, size3.Y * 1.25, size3.Z/2)
+                local scmin, on1 = Camera:WorldToViewportPoint(min)
+                local scmax, on2 = Camera:WorldToViewportPoint(max)
+                -- ESP Box
+                local box = EspObjects[plr].Box
+                if ESPBoxEnabled and on1 and on2 then
+                    box.Size = Vector2.new(math.abs(scmax.X - scmin.X), math.abs(scmax.Y - scmin.Y))
+                    box.Position = Vector2.new(math.min(scmin.X, scmax.X), math.min(scmin.Y, scmax.Y))
+                    box.Visible = true
+                else
+                    box.Visible = false
+                end
+                -- ESP Heart
+                local barravida = EspObjects[plr].LifeBar
+                local fillvida = EspObjects[plr].LifeFill
+                if ESPVidaEnabled and on1 and on2 then
+                    local h = math.abs(scmax.Y - scmin.Y)
+                    local vida = hum.Health / hum.MaxHealth
+                    -- barra preta
+                    barravida.Size = Vector2.new(6, h)
+                    barravida.Position = Vector2.new(math.min(scmin.X, scmax.X) - 10, math.min(scmin.Y, scmax.Y))
+                    barravida.Visible = true
+                    -- barra cheia colorida (preenchimento)
+                    local fillh = h * vida
+                    fillvida.Size = Vector2.new(6, fillh)
+                    fillvida.Position = Vector2.new(math.min(scmin.X, scmax.X) - 10, math.min(scmin.Y, scmax.Y) + (h - fillh))
+                    fillvida.Color = Color3.fromRGB(255 - (vida * 255), vida * 255, 0)
+                    fillvida.Visible = true
+                else
+                    barravida.Visible = false
+                    fillvida.Visible = false
+                end
+                -- ESP Line
+                local line = EspObjects[plr].Line
+                if ESPLineEnabled and head then
+                    local headscreen, onhead = Camera:WorldToViewportPoint(head.Position)
+                    if onhead then
+                        line.From = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+                        line.To = Vector2.new(headscreen.X, headscreen.Y)
+                        line.Visible = true
+                    else
+                        line.Visible = false
+                    end
+                else
+                    line.Visible = false
+                end
+            elseif EspObjects[plr] then
+                EspObjects[plr].Box.Visible = false
+                EspObjects[plr].Line.Visible = false
+                EspObjects[plr].LifeBar.Visible = false
+                EspObjects[plr].LifeFill.Visible = false
             end
         end
-        WindUI:Notify({ Title = "Failed", Content = "Enter manually.", Duration = 3 })
-    end })
+    end)
 end
 
--- ESP
-do
-    local Section = Tab_ESP:Section({ Title = "Player ESP" })
-    Section:Toggle({ Title = "Enable ESP", Value = false, Callback = function(v) Settings.ESP.Enabled = v end })
-    Section:Toggle({ Title = "Box", Value = true, Callback = function(v) Settings.ESP.Box = v end })
-    Section:Toggle({ Title = "Name", Value = true, Callback = function(v) Settings.ESP.Name = v end })
-    Section:Toggle({ Title = "Health Bar", Value = true, Callback = function(v) Settings.ESP.HealthBar = v end })
-    Section:Toggle({ Title = "Distance", Value = true, Callback = function(v) Settings.ESP.Distance = v end })
-    Section:Toggle({ Title = "Tracers", Value = true, Callback = function(v) Settings.ESP.Tracers = v end })
-    Section:Toggle({ Title = "Skeleton (R6/R15)", Value = true, Callback = function(v) Settings.ESP.Skeleton = v end })
+function DisableESP()
+    RunService:UnbindFromRenderStep("FPSPasseioESP")
+    ClearESP()
 end
 
--- Triggerbot
-do
-    local Section = Tab_Trig:Section({ Title = "Triggerbot" })
-    Section:Toggle({ Title = "Enable Triggerbot", Value = false, Callback = function(v) Settings.Triggerbot.Enabled = v end })
-    Section:Slider({ Title = "Delay (ms)", Step = 10, Value = { Min = 0, Max = 500, Default = 0 }, Callback = function(v) Settings.Triggerbot.Delay = v end })
-end
-
--- Hitbox
-do
-    local Section = Tab_Hit:Section({ Title = "Hitbox" })
-    Section:Toggle({ Title = "Enable Hitbox", Value = false, Callback = function(v) Settings.Hitbox.Enabled = v end })
-    Section:Slider({ Title = "Head Size", Step = 0.1, Value = { Min = 1, Max = 3, Default = 3 }, Callback = function(v) Settings.Hitbox.Size = v end })
-end
-
--- World effects
-do
-    local Section = Tab_World:Section({ Title = "Effects" })
-    Section:Toggle({ Title = "Anti-Flashbang", Value = false, Callback = function(v) Settings.AntiFlash = v end })
-    Section:Toggle({ Title = "Anti-Smoke", Value = false, Callback = function(v) Settings.AntiSmoke = v end })
-end
-
--- Movement
-do
-    local Section = Tab_Move:Section({ Title = "Bunny Hop" })
-    Section:Toggle({ Title = "Bunny Hop (Hold Space)", Value = false, Callback = function(v) Settings.Bhop = v end })
-end
-
--- Controller
-do
-    local Section = Tab_Ctrl:Section({ Title = "Aim Assist" })
-    Section:Toggle({ Title = "Use Controller Aim (Right Stick)", Value = false, Callback = function(v) Settings.Controller.Enabled = v end })
-    Section:Slider({ Title = "Sensitivity", Step = 0.1, Value = { Min = 0.1, Max = 2, Default = 0.5 }, Callback = function(v) Settings.Controller.Sensitivity = v end })
-end
-
--- Misc
-Tab_Misc:Button({
-    Title = "UNLOAD ALL",
-    Color = Color3.fromRGB(255,0,0),
-    Callback = function()
-        Settings.Aimbot.Enabled = false
-        Settings.Triggerbot.Enabled = false
-        Settings.Hitbox.Enabled = false
-        Settings.ESP.Enabled = false
-        Settings.Bhop = false
-        Settings.AntiFlash = false
-        Settings.AntiSmoke = false
-        Settings.Controller.Enabled = false
-        WindUI:Notify({ Title = "HvH", Content = "All features disabled.", Duration = 3 })
+TabESP:CreateToggle({
+    Name = "ESP Box",
+    CurrentValue = false,
+    Callback = function(b)
+        ESPBoxEnabled = b
+        if b or ESPLineEnabled or ESPVidaEnabled then EnableESP() else DisableESP() end
     end,
 })
 
-WindUI:Notify({ Title = "Universal HvH", Content = "Loaded! Camera aim + Silent aim. Full ESP with Skeleton (R6/R15).", Duration = 5 })
-print("Universal HvH (Viewport & Silent Aim + Full ESP) ready.")
+TabESP:CreateToggle({
+    Name = "ESP Heart",
+    CurrentValue = false,
+    Callback = function(b)
+        ESPVidaEnabled = b
+        if b or ESPBoxEnabled or ESPLineEnabled then EnableESP() else DisableESP() end
+    end,
+})
+
+TabESP:CreateToggle({
+    Name = "ESP Line",
+    CurrentValue = false,
+    Callback = function(b)
+        ESPLineEnabled = b
+        if b or ESPBoxEnabled or ESPVidaEnabled then EnableESP() else DisableESP() end
+    end,
+})
+
+TabESP:CreateSection("Ligue cada ESP para visualizar.")
+
+print("Legend Hub | [FPS] Passeio - Successful loading")
