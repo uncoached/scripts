@@ -527,7 +527,7 @@ SpammerTab:Toggle({
     Callback = function(state)
         if state then
             startFeature("spammer", function(flag)
-                local radius = 13
+                local radius = 10
                 while flag.running do
                     if character and character.PrimaryPart then
                         local center = character.PrimaryPart.Position
@@ -564,7 +564,7 @@ SpammerTab:Toggle({
 SpammerTab:Slider({
     Title = "Delay (s)",
     Step = 0.001,
-    Value = { Min = 0, Max = 0.1, Default = 0 },
+    Value = { Min = 0.01, Max = 0.1, Default = 0.01 },
     Callback = function(v) spamDelay = v end,
 })
 
