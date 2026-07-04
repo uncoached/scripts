@@ -1,4 +1,4 @@
--- Adapted Build Exploit Pack: Spammer centered on target, cage follows without teleport.
+-- Adapted Build Exploit Pack – Batch placing with 30 concurrent remotes
 -- Remotes: ReplicatedStorage.Remotes.DestroyBlock (FireServer with Model)
 --          ReplicatedStorage.Remotes.PlaceBlock (InvokeServer with blockType, CFrame)
 
@@ -57,13 +57,43 @@ local function startFeature(name, loopFunc)
     activeFeatures[name] = { thread = thread, running = flag }
 end
 
--- Place block helper – exact CFrame (0,0,1,0,1,0,-1,0,0), no Baseplate
+-- ==================== Concurrent Block Placer (30 max) ====================
+local MAX_CONCURRENT_PLACE = 30
+local placeActive = 0
+local placeQueue = {}
+
+local function processPlaceQueue()
+    while #placeQueue > 0 and placeActive < MAX_CONCURRENT_PLACE do
+        local job = table.remove(placeQueue, 1)
+        placeActive = placeActive + 1
+        task.spawn(function()
+            pcall(job.fn)
+            placeActive = placeActive - 1
+            if job.onComplete then job.onComplete() end
+            processPlaceQueue()
+        end)
+    end
+end
+
+local function placeBlockThrottled(blockType, cf)
+    table.insert(placeQueue, {
+        fn = function()
+            placeRemote:InvokeServer(blockType, cf)
+        end,
+        onComplete = nil
+    })
+    processPlaceQueue()
+end
+
+local function waitForAllPlacements()
+    repeat task.wait() until #placeQueue == 0 and placeActive == 0
+end
+
+-- Place block helper – uses throttled invoker, exact CFrame
 local function placeBlock(blockType, pos)
     local roundedPos = Vector3.new(math.round(pos.X), math.round(pos.Y), math.round(pos.Z))
     local cf = CFrame.new(roundedPos.X, roundedPos.Y, roundedPos.Z, 0, 0, 1, 0, 1, 0, -1, 0, 0)
-    pcall(function()
-        placeRemote:InvokeServer(blockType, cf)
-    end)
+    placeBlockThrottled(blockType, cf)
 end
 
 -- Destroy a single part by wrapping it in a Model for the remote
@@ -77,7 +107,7 @@ local function destroyPart(part)
     tempModel:Destroy()
 end
 
--- Cage a player – no teleport, just place blocks around target
+-- Cage a player – no teleport, places all blocks through throttler
 local function cagePlayer(target)
     if not target or not target.Character or not target.Character.PrimaryPart then return end
     local root = target.Character.PrimaryPart
@@ -259,8 +289,8 @@ TargetActions:Toggle({
             startFeature("cageTarget", function(flag)
                 while flag.running do
                     if not selectedTarget then task.wait(1); continue end
-                    cagePlayer(selectedTarget)  -- now no teleport, just places blocks
-                    task.wait(0.3)  -- faster interval
+                    cagePlayer(selectedTarget)  -- fires many placeBlock calls; throttler handles concurrency
+                    task.wait(0.2)
                 end
             end)
         else stopFeature("cageTarget") end
@@ -334,8 +364,7 @@ MainTab:Section({ Title = "Destroy All" }):Button({
     end,
 })
 
--- Place Blocks (Once) with speed slider
-local placeDelay = 0.005
+-- Place Blocks (Once) – now uses batch and waits for completion
 MainTab:Button({
     Title = "🧱 PLACE BLOCKS (Once)",
     Callback = function()
@@ -346,6 +375,7 @@ MainTab:Button({
         local gridSize = math.ceil(math.sqrt(blocksPerLayer))
         local blockType = "Oak Planks"
         local placed = 0
+        local positions = {}
         for layer = 0, heightLayers - 1 do
             local count = 0
             for x = -gridSize, gridSize do
@@ -354,23 +384,18 @@ MainTab:Button({
                     local posX = centerPos.X + (x * 4)
                     local posZ = centerPos.Z + (z * 4)
                     local posY = centerPos.Y + (layer * 4) + 2
-                    placeBlock(blockType, Vector3.new(posX, posY, posZ))
-                    placed = placed + 1
+                    table.insert(positions, Vector3.new(posX, posY, posZ))
                     count = count + 1
-                    if placeDelay > 0 then task.wait(placeDelay) end
                 end
                 if count >= blocksPerLayer then break end
             end
         end
-        WindUI:Notify({ Title = "Placed", Content = "Placed " .. placed .. " blocks." })
+        for _, pos in ipairs(positions) do
+            placeBlock(blockType, pos)
+        end
+        waitForAllPlacements()
+        WindUI:Notify({ Title = "Placed", Content = "All " .. totalBlocks .. " blocks sent." })
     end,
-})
-
-MainTab:Slider({
-    Title = "Place Delay (s)",
-    Step = 0.001,
-    Value = { Min = 0, Max = 0.1, Default = 0.005 },
-    Callback = function(v) placeDelay = v end,
 })
 
 -- Fling All
@@ -403,10 +428,10 @@ MainTab:Toggle({
                     for _, plr in ipairs(Players:GetPlayers()) do
                         if plr ~= player then
                             cagePlayer(plr)
-                            task.wait(0.3)
+                            task.wait(0.2)
                         end
                     end
-                    task.wait(1)
+                    task.wait(0.5)
                 end
             end)
         else stopFeature("cageAll") end
@@ -538,7 +563,7 @@ OrbitTab:Slider({ Title = "Min Height", Step = 1, Value = { Min = -10, Max = 10,
 OrbitTab:Slider({ Title = "Max Height", Step = 1, Value = { Min = -10, Max = 20, Default = 10 }, Callback = function(v) orbitMaxHeight = v end })
 OrbitTab:Slider({ Title = "Y Offset", Step = 1, Value = { Min = -10, Max = 10, Default = 0 }, Callback = function(v) orbitYOffset = v end })
 
--- SPAMMER TAB (Radius 13) – now follows a selected target
+-- SPAMMER TAB (Radius 13) – follows target, uses throttler
 local SpammerTab = Window:Tab({ Title = "Spammer", Icon = "solar:layers-bold" })
 local spamTarget = nil
 local spamDropdown = SpammerTab:Section({ Title = "Spammer Target" }):Dropdown({
@@ -558,8 +583,7 @@ Players.PlayerRemoving:Connect(function(p)
     refreshDropdown(spamDropdown)
 end)
 
-local spamDelay = 0
--- Precompute offsets for sphere radius 13
+-- Precompute sphere offsets
 local sphereOffsets = {}
 for x = -13,13 do
     for y = -13,13 do
@@ -583,9 +607,8 @@ SpammerTab:Toggle({
                         for _, offset in ipairs(sphereOffsets) do
                             if not flag.running then return end
                             placeBlock("Glass", center + offset)
-                            if spamDelay > 0 then task.wait(spamDelay) end
+                            -- No per-block delay; throttler manages concurrency
                         end
-                        -- loop immediately to keep filling (sphere moves with target)
                     else
                         task.wait(0.5)
                     end
@@ -595,12 +618,6 @@ SpammerTab:Toggle({
             stopFeature("spammer")
         end
     end,
-})
-SpammerTab:Slider({
-    Title = "Delay (s)",
-    Step = 0.001,
-    Value = { Min = 0, Max = 0.1, Default = 0 },
-    Callback = function(v) spamDelay = v end,
 })
 
 -- LOCAL PLAYER TAB
@@ -723,5 +740,5 @@ Window:Button({
     end,
 })
 
-WindUI:Notify({ Title = "Build Exploit Pack", Content = "Spammer follows target, cage no teleport." })
-print("Build Exploit Pack – Follow features loaded.")
+WindUI:Notify({ Title = "Build Exploit Pack", Content = "30 concurrent block placements active." })
+print("Build Exploit Pack – Batch placer (30) loaded.")
