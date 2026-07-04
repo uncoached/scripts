@@ -1,4 +1,4 @@
--- Adapted Build Exploit Pack – Batch placing with 30 concurrent remotes
+-- Adapted Build Exploit Pack – Instant cage, batch spammer/orbit still throttled
 -- Remotes: ReplicatedStorage.Remotes.DestroyBlock (FireServer with Model)
 --          ReplicatedStorage.Remotes.PlaceBlock (InvokeServer with blockType, CFrame)
 
@@ -89,7 +89,7 @@ local function waitForAllPlacements()
     repeat task.wait() until #placeQueue == 0 and placeActive == 0
 end
 
--- Place block helper – uses throttled invoker, exact CFrame
+-- Place block helper – for non-cage use (still throttled)
 local function placeBlock(blockType, pos)
     local roundedPos = Vector3.new(math.round(pos.X), math.round(pos.Y), math.round(pos.Z))
     local cf = CFrame.new(roundedPos.X, roundedPos.Y, roundedPos.Z, 0, 0, 1, 0, 1, 0, -1, 0, 0)
@@ -107,16 +107,25 @@ local function destroyPart(part)
     tempModel:Destroy()
 end
 
--- Cage a player – no teleport, places all blocks through throttler
+-- ==================== INSTANT CAGE (bypasses throttler) ====================
 local function cagePlayer(target)
     if not target or not target.Character or not target.Character.PrimaryPart then return end
     local root = target.Character.PrimaryPart
     local center = root.Position
+    local blockType = "Glass"
+    -- Directly invoke remote for each block, spawn all at once (124 blocks, acceptable)
     for x = -2,2 do
         for y = -2,2 do
             for z = -2,2 do
                 if x==0 and y==0 and z==0 then continue end
-                placeBlock("Glass", center + Vector3.new(x*4, y*4, z*4))
+                local pos = center + Vector3.new(x*4, y*4, z*4)
+                local roundedPos = Vector3.new(math.round(pos.X), math.round(pos.Y), math.round(pos.Z))
+                local cf = CFrame.new(roundedPos.X, roundedPos.Y, roundedPos.Z, 0, 0, 1, 0, 1, 0, -1, 0, 0)
+                task.spawn(function()
+                    pcall(function()
+                        placeRemote:InvokeServer(blockType, cf)
+                    end)
+                end)
             end
         end
     end
@@ -289,8 +298,8 @@ TargetActions:Toggle({
             startFeature("cageTarget", function(flag)
                 while flag.running do
                     if not selectedTarget then task.wait(1); continue end
-                    cagePlayer(selectedTarget)  -- fires many placeBlock calls; throttler handles concurrency
-                    task.wait(0.2)
+                    cagePlayer(selectedTarget)  -- instant, no teleport, follows
+                    task.wait(0.05)  -- rapid follow
                 end
             end)
         else stopFeature("cageTarget") end
@@ -364,7 +373,7 @@ MainTab:Section({ Title = "Destroy All" }):Button({
     end,
 })
 
--- Place Blocks (Once) – now uses batch and waits for completion
+-- Place Blocks (Once) – uses throttler, waits for completion
 MainTab:Button({
     Title = "🧱 PLACE BLOCKS (Once)",
     Callback = function()
@@ -374,7 +383,6 @@ MainTab:Button({
         local blocksPerLayer = math.ceil(totalBlocks / heightLayers)
         local gridSize = math.ceil(math.sqrt(blocksPerLayer))
         local blockType = "Oak Planks"
-        local placed = 0
         local positions = {}
         for layer = 0, heightLayers - 1 do
             local count = 0
@@ -418,7 +426,7 @@ MainTab:Toggle({
     end,
 })
 
--- Cage All
+-- Cage All – uses instant cage for each player
 MainTab:Toggle({
     Title = "Cage All",
     Callback = function(state)
@@ -427,8 +435,8 @@ MainTab:Toggle({
                 while flag.running do
                     for _, plr in ipairs(Players:GetPlayers()) do
                         if plr ~= player then
-                            cagePlayer(plr)
-                            task.wait(0.2)
+                            cagePlayer(plr)  -- instant
+                            task.wait(0.05)
                         end
                     end
                     task.wait(0.5)
@@ -606,8 +614,7 @@ SpammerTab:Toggle({
                         local center = target.Character.PrimaryPart.Position
                         for _, offset in ipairs(sphereOffsets) do
                             if not flag.running then return end
-                            placeBlock("Glass", center + offset)
-                            -- No per-block delay; throttler manages concurrency
+                            placeBlock("Glass", center + offset)  -- uses throttler, max 30 concurrent
                         end
                     else
                         task.wait(0.5)
@@ -740,5 +747,5 @@ Window:Button({
     end,
 })
 
-WindUI:Notify({ Title = "Build Exploit Pack", Content = "30 concurrent block placements active." })
-print("Build Exploit Pack – Batch placer (30) loaded.")
+WindUI:Notify({ Title = "Build Exploit Pack", Content = "Instant cage active, spammer throttled 30." })
+print("Build Exploit Pack – Instant cage + batch spammer loaded.")
