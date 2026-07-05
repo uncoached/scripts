@@ -1,5 +1,5 @@
 local menu
-local MenuName = isfile("bitchbot/menuname.txt") and readfile("bitchbot/menuname.txt") or nil
+local MenuName = isfile("tulip/menuname.txt") and readfile("tulip/menuname.txt") or nil
 local loadstart = tick()
 
 local function map(X, A, B, C, D)
@@ -432,25 +432,25 @@ local function GetEvent(eventname)
 	return allevent[eventname]
 end
 
-local BBOT_IMAGES = {}
+local tulip_IMAGES = {}
 MultiThreadList({
 	function()
-		BBOT_IMAGES[1] = game:HttpGet("https://i.imgur.com/9NMuFcQ.png")
+		tulip_IMAGES[1] = game:HttpGet("https://i.imgur.com/9NMuFcQ.png")
 	end,
 	function()
-		BBOT_IMAGES[2] = game:HttpGet("https://i.imgur.com/jG3NjxN.png")
+		tulip_IMAGES[2] = game:HttpGet("https://i.imgur.com/jG3NjxN.png")
 	end,
 	function()
-		BBOT_IMAGES[3] = game:HttpGet("https://i.imgur.com/2Ty4u2O.png")
+		tulip_IMAGES[3] = game:HttpGet("https://i.imgur.com/2Ty4u2O.png")
 	end,
 	function()
-		BBOT_IMAGES[4] = game:HttpGet("https://i.imgur.com/kNGuTlj.png")
+		tulip_IMAGES[4] = game:HttpGet("https://i.imgur.com/kNGuTlj.png")
 	end,
 	function()
-		BBOT_IMAGES[5] = game:HttpGet("https://i.imgur.com/OZUR3EY.png")
+		tulip_IMAGES[5] = game:HttpGet("https://i.imgur.com/OZUR3EY.png")
 	end,
 	function()
-		BBOT_IMAGES[6] = game:HttpGet("https://i.imgur.com/3HGuyVa.png")
+		tulip_IMAGES[6] = game:HttpGet("https://i.imgur.com/3HGuyVa.png")
 	end,
 })
 
@@ -459,7 +459,7 @@ local loaded = {}
 do
 	local function Loopy_Image_Checky()
 		for i = 1, 6 do
-			local v = BBOT_IMAGES[i]
+			local v = tulip_IMAGES[i]
 			if v == nil then
 				return true
 			elseif not loaded[i] then
@@ -483,27 +483,27 @@ NETWORK:SetOutgoingKBPSLimit(0)
 
 setfpscap(maxfps or 144)
 
-if not isfolder("bitchbot") then
-	makefolder("bitchbot")
-	if not isfile("bitchbot/relations.bb") then
-		writefile("bitchbot/relations.bb", "bb:{{friends:}{priority:}")
+if not isfolder("tulip") then
+	makefolder("tulip")
+	if not isfile("tulip/relations.bb") then
+		writefile("tulip/relations.bb", "bb:{{friends:}{priority:}")
 	end
 else
-	if not isfile("bitchbot/relations.bb") then
-		writefile("bitchbot/relations.bb", "bb:{{friends:}{priority:}")
+	if not isfile("tulip/relations.bb") then
+		writefile("tulip/relations.bb", "bb:{{friends:}{priority:}")
 	end
-	writefile("bitchbot/debuglog.bb", "")
+	writefile("tulip/debuglog.bb", "")
 end
 
-if not isfolder("bitchbot/" .. menu.game) then
-	makefolder("bitchbot/" .. menu.game)
+if not isfolder("tulip/" .. menu.game) then
+	makefolder("tulip/" .. menu.game)
 end
 
 local configs = {}
 
 local function GetConfigs()
 	local result = {}
-	local directory = "bitchbot\\" .. menu.game
+	local directory = "tulip\\" .. menu.game
 	for k, v in pairs(listfiles(directory)) do
 		local clipped = v:sub(#directory + 2)
 		if clipped:sub(#clipped - 2) == ".bb" then
@@ -513,7 +513,7 @@ local function GetConfigs()
 		end
 	end
 	if #result <= 0 then
-		writefile("bitchbot/" .. menu.game .. "/Default.bb", "")
+		writefile("tulip/" .. menu.game .. "/Default.bb", "")
 	end
 	return result
 end
@@ -522,14 +522,14 @@ local Players = game:GetService("Players")
 local stats = game:GetService("Stats")
 
 local function UnpackRelations()
-	local str = isfile("bitchbot/relations.bb") and readfile("bitchbot/relations.bb") or nil
+	local str = isfile("tulip/relations.bb") and readfile("tulip/relations.bb") or nil
 	local final = {
 		friends = {},
 		priority = {},
 	}
 	if str then
 		if str:find("bb:{{") then
-			writefile("bitchbot/relations.bb", "friends:\npriority:")
+			writefile("tulip/relations.bb", "friends:\npriority:")
 			return
 		end
 
@@ -605,7 +605,7 @@ local function WriteRelations()
 		end
 	end
 
-	writefile("bitchbot/relations.bb", str)
+	writefile("tulip/relations.bb", str)
 end
 CreateThread(function()
 	if (not menu or not menu.GetVal) then
@@ -1465,7 +1465,7 @@ do
 		Draw:MenuBigText(text, true, false, x + size + 8, y, tab)
 		table.insert(temptable, tab[#tab])
 
-		Draw:MenuImage(true, BBOT_IMAGES[5], x + 2, y + 2, size, size, 1, tab)
+		Draw:MenuImage(true, tulip_IMAGES[5], x + 2, y + 2, size, size, 1, tab)
 		table.insert(temptable, tab[#tab])
 
 		return temptable
@@ -2177,7 +2177,7 @@ function menu.Initialize(menutable)
 	ColorpickerOutline(false, 11, 24, 158, 158, { 0, 0, 0, 255 }, cp.drawings)
 	ColorpickerRect(false, 12, 25, 156, 156, { 0, 0, 0, 255 }, cp.drawings)
 	local maincolor = cp.drawings[#cp.drawings]
-	ColorpickerImage(false, BBOT_IMAGES[1], 12, 25, 156, 156, 1, cp.drawings)
+	ColorpickerImage(false, tulip_IMAGES[1], 12, 25, 156, 156, 1, cp.drawings)
 
 	--https://i.imgur.com/jG3NjxN.png
 	local alphabar = {}
@@ -2185,18 +2185,18 @@ function menu.Initialize(menutable)
 	table.insert(alphabar, cp.drawings[#cp.drawings])
 	ColorpickerOutline(false, 11, 190, 158, 12, { 0, 0, 0, 255 }, cp.drawings)
 	table.insert(alphabar, cp.drawings[#cp.drawings])
-	ColorpickerImage(false, BBOT_IMAGES[2], 12, 191, 159, 10, 1, cp.drawings)
+	ColorpickerImage(false, tulip_IMAGES[2], 12, 191, 159, 10, 1, cp.drawings)
 	table.insert(alphabar, cp.drawings[#cp.drawings])
 
 	ColorpickerOutline(false, 176, 23, 14, 160, { 30, 30, 30, 255 }, cp.drawings)
 	ColorpickerOutline(false, 177, 24, 12, 158, { 0, 0, 0, 255 }, cp.drawings)
 	--https://i.imgur.com/2Ty4u2O.png
-	ColorpickerImage(false, BBOT_IMAGES[3], 178, 25, 10, 156, 1, cp.drawings)
+	ColorpickerImage(false, tulip_IMAGES[3], 178, 25, 10, 156, 1, cp.drawings)
 
 	ColorpickerText("New Color", false, false, 198, 23, cp.drawings)
 	ColorpickerOutline(false, 197, 37, 75, 40, { 30, 30, 30, 255 }, cp.drawings)
 	ColorpickerOutline(false, 198, 38, 73, 38, { 0, 0, 0, 255 }, cp.drawings)
-	ColorpickerImage(false, BBOT_IMAGES[4], 199, 39, 71, 36, 1, cp.drawings)
+	ColorpickerImage(false, tulip_IMAGES[4], 199, 39, 71, 36, 1, cp.drawings)
 
 	ColorpickerRect(false, 199, 39, 71, 36, { 255, 0, 0, 255 }, cp.drawings)
 	local newcolor = cp.drawings[#cp.drawings]
@@ -2208,7 +2208,7 @@ function menu.Initialize(menutable)
 	ColorpickerText("Old Color", false, false, 198, 77, cp.drawings)
 	ColorpickerOutline(false, 197, 91, 75, 40, { 30, 30, 30, 255 }, cp.drawings)
 	ColorpickerOutline(false, 198, 92, 73, 38, { 0, 0, 0, 255 }, cp.drawings)
-	ColorpickerImage(false, BBOT_IMAGES[4], 199, 93, 71, 36, 1, cp.drawings)
+	ColorpickerImage(false, tulip_IMAGES[4], 199, 93, 71, 36, 1, cp.drawings)
 
 	ColorpickerRect(false, 199, 93, 71, 36, { 255, 0, 0, 255 }, cp.drawings)
 	local oldcolor = cp.drawings[#cp.drawings]
@@ -2807,7 +2807,7 @@ function menu.Initialize(menutable)
 	local buttonsInQue = {}
 
 	local function SaveCurSettings() --ANCHOR figgies
-		local figgy = "BitchBot v2\nmade with <3 by nata and bitch\n\n" -- screw zarzel XD (and json and classy)
+		local figgy = "tulip v2\nmade with <3 by nata and bitch\n\n" -- screw zarzel XD (and json and classy)
 
 		for k, v in next, menuElementTypes do
 			figgy ..= v .. "s {\n"
@@ -2931,7 +2931,7 @@ function menu.Initialize(menutable)
 			table.insert(lines, s)
 		end
 
-		if lines[1] == "BitchBot v2" then
+		if lines[1] == "tulip v2" then
 			local start = nil
 			for i, v in next, lines do
 				if v == "toggles {" then
@@ -3259,7 +3259,7 @@ function menu.Initialize(menutable)
 	function menu.saveconfig()
 		local figgy = SaveCurSettings()
 		writefile(
-			"bitchbot/"
+			"tulip/"
 				.. menu.game
 				.. "/"
 				.. menu.options["Settings"]["Configuration"]["ConfigName"][1]
@@ -3271,7 +3271,7 @@ function menu.Initialize(menutable)
 	end
 	
 	function menu.loadconfig()
-		local configname = "bitchbot/"
+		local configname = "tulip/"
 			.. menu.game
 			.. "/"
 			.. menu.options["Settings"]["Configuration"]["ConfigName"][1]
@@ -3324,7 +3324,7 @@ function menu.Initialize(menutable)
 			menu.saveconfig()
 		elseif bp == menu.options["Settings"]["Configuration"]["Delete Config"] then
 			delfile(
-				"bitchbot/"
+				"tulip/"
 					.. menu.game
 					.. "/"
 					.. menu.options["Settings"]["Configuration"]["ConfigName"][1]
