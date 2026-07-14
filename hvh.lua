@@ -1,4 +1,4 @@
--- Tulip.lua – Ultimate HvH (WindUI) – All UI visible, ESP death fix, Magic Bullet
+-- Tulip.lua – Full HvH (WindUI) – ESP independent of aimbot
 local WindUI = nil
 pcall(function()
     if game:GetService("RunService"):IsStudio() then
@@ -17,7 +17,7 @@ local Camera = Workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
 local RS = game:GetService("ReplicatedStorage")
 
--- Settings
+-- Settings (ESP.OnlyTarget removed)
 local Settings = {
     SilentAim = { Enabled = false, FOV = 200, HitPart = "Head", VisibleCheck = true, Wallbang = false, TeamCheck = false },
     CameraAim = { Enabled = false, Smoothness = 0.2, FOV = 200, VisibleCheck = true, TeamCheck = false, AimKey = "RightMouse" },
@@ -29,7 +29,7 @@ local Settings = {
     ThirdPerson = { Enabled = false, Distance = 10 },
     ESP = {
         Enabled = true, Box = true, Name = true, HealthBar = true, Distance = true, Tracers = true, Skeleton = true,
-        VisibleOnly = false, OnlyTarget = false, NPCs = true
+        VisibleOnly = false, NPCs = true
     },
     Chams = { Enabled = false, FillColor = Color3.fromRGB(255,0,0), OutlineColor = Color3.new(0,0,0) },
     Glow = { Enabled = false, Color = Color3.fromRGB(255,0,0) },
@@ -38,7 +38,6 @@ local Settings = {
 
 -- Feature variables
 local silentAimTarget, silentAimTargetModel = nil, nil
-local cameraAimTarget = nil
 local espCache = {}
 local chamHighlights = {}
 local glowBillboards = {}
@@ -55,7 +54,7 @@ local function isVisible(part)
     return hit and hit:IsDescendantOf(part.Parent)
 end
 
--- Target list (players + npcs)
+-- Target list (players + npcs) – NOT dependent on aimbot
 local function getTargetList()
     local list = {}
     for _, plr in ipairs(Players:GetPlayers()) do
@@ -77,12 +76,13 @@ local function getTargetList()
     return list
 end
 
--- Silent aim target update
+-- Silent aim target update (only for the aimbot itself)
 local function updateSilentAim()
     if not Settings.SilentAim.Enabled then
         silentAimTarget, silentAimTargetModel = nil, nil; return
     end
-    local closest, closestDist, center = nil, Settings.SilentAim.FOV, Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+    local closestDist = Settings.SilentAim.FOV
+    local center = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
     local bestPos, bestModel = nil, nil
     for _, char in ipairs(getTargetList()) do
         local part = (Settings.SilentAim.HitPart=="Head" and getHead(char)) or (Settings.SilentAim.HitPart=="UpperTorso" and char:FindFirstChild("UpperTorso")) or getHRP(char)
@@ -92,7 +92,9 @@ local function updateSilentAim()
         local dist = (Vector2.new(screenPos.X, screenPos.Y) - center).Magnitude
         if dist < closestDist then
             if not Settings.SilentAim.Wallbang and Settings.SilentAim.VisibleCheck and not isVisible(part) then continue end
-            closestDist, bestPos, bestModel = dist, part.Position, char
+            closestDist = dist
+            bestPos = part.Position
+            bestModel = char
         end
     end
     silentAimTarget, silentAimTargetModel = bestPos, bestModel
@@ -111,7 +113,7 @@ Hooks.Raycast = hookmetamethod(game, "__namecall", newcclosure(function(self, ..
     return Hooks.Raycast(self, ...)
 end))
 
--- Magic Bullet: When you fire, shoots all visible enemies in FOV
+-- Magic Bullet
 local magicBulletRemote = nil
 local function findRemote()
     if magicBulletRemote then return magicBulletRemote end
@@ -121,7 +123,6 @@ local function findRemote()
     end
     return magicBulletRemote
 end
-
 local oldFireServer
 local function hookMagicBullet()
     local remote = findRemote()
@@ -155,7 +156,7 @@ local function hookMagicBullet()
 end
 pcall(hookMagicBullet)
 
--- Camera aimbot
+-- Camera aimbot (independent, uses its own target)
 local function updateCameraAim()
     if not Settings.CameraAim.Enabled then return end
     if Settings.CameraAim.AimKey ~= "Always" and not aimKeyHeld then return end
@@ -169,7 +170,8 @@ local function updateCameraAim()
         local dist = (Vector2.new(screenPos.X, screenPos.Y) - center).Magnitude
         if dist < closestDist then
             if Settings.CameraAim.VisibleCheck and not isVisible(head) then continue end
-            closestDist, closest = dist, char
+            closestDist = dist
+            closest = char
         end
     end
     if closest then
@@ -244,7 +246,7 @@ local function updateThirdPerson()
     end
 end
 
--- ESP (Drawing) with death fix
+-- ============ ESP (Drawing) – independent of aimbot ============
 local hasDrawing = pcall(function() return Drawing.new end)
 if hasDrawing then
     local function getBonePositions(char)
@@ -295,26 +297,20 @@ if hasDrawing then
             return
         end
 
+        -- Show ALL valid targets (players+NPCs that are alive)
         local allowed = {}
-        if Settings.ESP.OnlyTarget then
-            if silentAimTargetModel and getHum(silentAimTargetModel) and getHum(silentAimTargetModel).Health > 0 and silentAimTargetModel.Parent then
-                allowed[silentAimTargetModel] = true
-            end
-        else
-            for _, char in ipairs(getTargetList()) do
-                if getHum(char) and getHum(char).Health > 0 and char.Parent then allowed[char] = true end
+        for _, char in ipairs(getTargetList()) do
+            if getHum(char) and getHum(char).Health > 0 and char.Parent then
+                allowed[char] = true
             end
         end
 
-        -- Remove drawings for dead/removed models
+        -- Remove dead/removed
         for model, _ in pairs(espCache) do
-            local hum = getHum(model)
-            if not hum or hum.Health <= 0 or not model.Parent or not allowed[model] then
-                cleanupESP(model)
-            end
+            if not allowed[model] then cleanupESP(model) end
         end
 
-        -- Draw allowed
+        -- Draw
         for model, _ in pairs(allowed) do
             local hum = getHum(model)
             local root = getHRP(model)
@@ -392,7 +388,7 @@ else
     warn("Drawing library missing – ESP disabled.")
 end
 
--- Chams & Glow
+-- Chams & Glow (also independent of aimbot)
 local function refreshChams()
     for _, hl in pairs(chamHighlights) do hl:Destroy() end
     chamHighlights = {}
@@ -428,7 +424,7 @@ RunService.Heartbeat:Connect(function()
     if Settings.Glow.Enabled then refreshGlow() end
 end)
 
--- Key handling
+-- Key handling for camera aim
 UIS.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton2 then aimKeyHeld = true end
 end)
@@ -456,13 +452,13 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- ==================== UI (fixed size, all tabs) ====================
+-- ==================== UI ====================
 local Window = WindUI:CreateWindow({
     Title = "Tulip",
     Folder = "Tulip",
     Icon = "solar:flower-bold",
     OpenButton = { Title = "Open", Enabled = true },
-    Size = UDim2.fromOffset(650, 750),  -- enough vertical space
+    Size = UDim2.fromOffset(650, 750),
 })
 
 local CombatTab = Window:Tab({ Title = "Combat", Icon = "solar:sword-bold" })
@@ -470,34 +466,34 @@ local VisualsTab = Window:Tab({ Title = "Visuals", Icon = "solar:eye-bold" })
 local MovementTab = Window:Tab({ Title = "Movement", Icon = "solar:walk-bold" })
 local InfoTab = Window:Tab({ Title = "Info", Icon = "solar:info-bold" })
 
--- ===== COMBAT =====
-local SilentSection = CombatTab:Section({ Title = "Silent Aim" })
-SilentSection:Toggle({ Title = "Enabled", Callback = function(v) Settings.SilentAim.Enabled = v end })
-SilentSection:Toggle({ Title = "Visibility Check", Value = true, Callback = function(v) Settings.SilentAim.VisibleCheck = v end })
-SilentSection:Toggle({ Title = "Wallbang", Value = false, Callback = function(v) Settings.SilentAim.Wallbang = v end })
-SilentSection:Toggle({ Title = "Team Check", Value = false, Callback = function(v) Settings.SilentAim.TeamCheck = v end })
-SilentSection:Slider({ Title = "FOV", Step = 10, Value = { Min = 10, Max = 500, Default = 200 }, Callback = function(v) Settings.SilentAim.FOV = v end })
-SilentSection:Dropdown({ Title = "Hit Part", Values = {"Head","UpperTorso","HumanoidRootPart"}, Value = "Head", Callback = function(v) Settings.SilentAim.HitPart = v end })
-SilentSection:Toggle({ Title = "Show FOV Circle", Value = false, Callback = function(v) Settings.FOVCircle = v end })
+-- Combat
+CombatTab:Section({ Title = "Silent Aim" })
+    :Toggle({ Title = "Enabled", Callback = function(v) Settings.SilentAim.Enabled = v end })
+    :Toggle({ Title = "Visibility Check", Value = true, Callback = function(v) Settings.SilentAim.VisibleCheck = v end })
+    :Toggle({ Title = "Wallbang", Value = false, Callback = function(v) Settings.SilentAim.Wallbang = v end })
+    :Toggle({ Title = "Team Check", Value = false, Callback = function(v) Settings.SilentAim.TeamCheck = v end })
+    :Slider({ Title = "FOV", Step = 10, Value = { Min = 10, Max = 500, Default = 200 }, Callback = function(v) Settings.SilentAim.FOV = v end })
+    :Dropdown({ Title = "Hit Part", Values = {"Head","UpperTorso","HumanoidRootPart"}, Value = "Head", Callback = function(v) Settings.SilentAim.HitPart = v end })
+    :Toggle({ Title = "Show FOV Circle", Value = false, Callback = function(v) Settings.FOVCircle = v end })
 
-local CameraSection = CombatTab:Section({ Title = "Camera Aimbot" })
-CameraSection:Toggle({ Title = "Enabled", Callback = function(v) Settings.CameraAim.Enabled = v end })
-CameraSection:Slider({ Title = "Smoothness", Step = 0.05, Value = { Min = 0.01, Max = 1, Default = 0.2 }, Callback = function(v) Settings.CameraAim.Smoothness = v end })
-CameraSection:Slider({ Title = "FOV", Step = 10, Value = { Min = 10, Max = 500, Default = 200 }, Callback = function(v) Settings.CameraAim.FOV = v end })
-CameraSection:Toggle({ Title = "Visible Check", Value = true, Callback = function(v) Settings.CameraAim.VisibleCheck = v end })
-CameraSection:Toggle({ Title = "Team Check", Value = false, Callback = function(v) Settings.CameraAim.TeamCheck = v end })
-CameraSection:Dropdown({ Title = "Aim Key", Values = {"RightMouse","Always"}, Value = "RightMouse", Callback = function(v) Settings.CameraAim.AimKey = v end })
+CombatTab:Section({ Title = "Camera Aimbot" })
+    :Toggle({ Title = "Enabled", Callback = function(v) Settings.CameraAim.Enabled = v end })
+    :Slider({ Title = "Smoothness", Step = 0.05, Value = { Min = 0.01, Max = 1, Default = 0.2 }, Callback = function(v) Settings.CameraAim.Smoothness = v end })
+    :Slider({ Title = "FOV", Step = 10, Value = { Min = 10, Max = 500, Default = 200 }, Callback = function(v) Settings.CameraAim.FOV = v end })
+    :Toggle({ Title = "Visible Check", Value = true, Callback = function(v) Settings.CameraAim.VisibleCheck = v end })
+    :Toggle({ Title = "Team Check", Value = false, Callback = function(v) Settings.CameraAim.TeamCheck = v end })
+    :Dropdown({ Title = "Aim Key", Values = {"RightMouse","Always"}, Value = "RightMouse", Callback = function(v) Settings.CameraAim.AimKey = v end })
 
-local MagicSection = CombatTab:Section({ Title = "Magic Bullet" })
-MagicSection:Toggle({ Title = "Enabled", Callback = function(v) Settings.MagicBullet.Enabled = v end })
-MagicSection:Slider({ Title = "FOV", Step = 10, Value = { Min = 10, Max = 500, Default = 200 }, Callback = function(v) Settings.MagicBullet.FOV = v end })
+CombatTab:Section({ Title = "Magic Bullet" })
+    :Toggle({ Title = "Enabled", Callback = function(v) Settings.MagicBullet.Enabled = v end })
+    :Slider({ Title = "FOV", Step = 10, Value = { Min = 10, Max = 500, Default = 200 }, Callback = function(v) Settings.MagicBullet.FOV = v end })
 
-local SpinSection = CombatTab:Section({ Title = "Spinbot" })
-SpinSection:Toggle({ Title = "Enabled", Callback = function(v) Settings.Spinbot.Enabled = v; updateSpinbot() end })
-SpinSection:Slider({ Title = "Speed", Step = 1, Value = { Min = 1, Max = 100, Default = 15 }, Callback = function(v) Settings.Spinbot.Speed = v end })
-SpinSection:Slider({ Title = "Pitch Angle", Step = 5, Value = { Min = -90, Max = 90, Default = 0 }, Callback = function(v) Settings.Spinbot.PitchAngle = v end })
+CombatTab:Section({ Title = "Spinbot" })
+    :Toggle({ Title = "Enabled", Callback = function(v) Settings.Spinbot.Enabled = v; updateSpinbot() end })
+    :Slider({ Title = "Speed", Step = 1, Value = { Min = 1, Max = 100, Default = 15 }, Callback = function(v) Settings.Spinbot.Speed = v end })
+    :Slider({ Title = "Pitch Angle", Step = 5, Value = { Min = -90, Max = 90, Default = 0 }, Callback = function(v) Settings.Spinbot.PitchAngle = v end })
 
--- ===== MOVEMENT =====
+-- Movement
 MovementTab:Section({ Title = "Jumps" })
     :Toggle({ Title = "Bunny Hop", Callback = function(v) Settings.Bhop = v; updateMovementJumps() end })
     :Toggle({ Title = "Air Jump", Callback = function(v) Settings.AirJump = v; updateMovementJumps() end })
@@ -514,7 +510,7 @@ MovementTab:Section({ Title = "Camera" })
         end
     end })
 
--- ===== VISUALS =====
+-- Visuals (ESP completely independent of aimbot)
 VisualsTab:Section({ Title = "Player ESP" })
     :Toggle({ Title = "Enable ESP", Value = true, Callback = function(v) Settings.ESP.Enabled = v end })
     :Toggle({ Title = "Box", Value = true, Callback = function(v) Settings.ESP.Box = v end })
@@ -524,7 +520,6 @@ VisualsTab:Section({ Title = "Player ESP" })
     :Toggle({ Title = "Tracers", Value = true, Callback = function(v) Settings.ESP.Tracers = v end })
     :Toggle({ Title = "Skeleton", Value = true, Callback = function(v) Settings.ESP.Skeleton = v end })
     :Toggle({ Title = "Visible Only", Value = false, Callback = function(v) Settings.ESP.VisibleOnly = v end })
-    :Toggle({ Title = "Only Aimbot Target", Value = false, Callback = function(v) Settings.ESP.OnlyTarget = v end })
     :Toggle({ Title = "Include NPCs", Value = true, Callback = function(v) Settings.ESP.NPCs = v end })
 
 VisualsTab:Section({ Title = "Chams" })
@@ -532,18 +527,18 @@ VisualsTab:Section({ Title = "Chams" })
 VisualsTab:Section({ Title = "Glow" })
     :Toggle({ Title = "Enabled", Callback = function(v) Settings.Glow.Enabled = v; refreshGlow() end })
 
--- ===== INFO =====
+-- Info
 InfoTab:Section({ Title = "Discord" })
     :Button({ Title = "Copy Discord Invite", Callback = function()
         setclipboard("https://discord.gg/dJJ3psbAxw")
         WindUI:Notify({ Title = "Tulip", Content = "Discord link copied!" })
     end })
 
--- Initial activation
+-- Initialisation
 updateSpinbot()
 updateMovementJumps()
 updateThirdPerson()
 refreshChams()
 refreshGlow()
-WindUI:Notify({ Title = "Tulip", Content = "Ultimate HvH loaded!" })
-print("Tulip.lua – All features active. Magic Bullet ready.")
+WindUI:Notify({ Title = "Tulip", Content = "Loaded! ESP is independent of aimbot." })
+print("Tulip.lua – ESP fully independent, death cleanups working.")
