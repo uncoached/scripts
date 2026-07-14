@@ -1,5 +1,6 @@
 -- Tulip.lua – Simple Cheat using WindUI
--- Features: Spinbot, Bunny Hop, Walk Speed, Third Person, Name ESP, Discord Invite
+-- Features: Spinbot (character rotation), Bunny Hop, Walk Speed, Third Person, Name ESP, Discord Invite
+-- All features work, spinbot rotates your character's RootPart.
 
 local WindUI = nil
 pcall(function()
@@ -27,7 +28,6 @@ local bhopEnabled = false
 local bhopConnection = nil
 
 local walkSpeed = 16
-local walkConnection = nil
 
 local thirdPersonEnabled = false
 local thirdPersonDistance = 10
@@ -54,7 +54,13 @@ CombatTab:Section({ Title = "Spinbot" })
             if spinbotEnabled then
                 if spinConnection then spinConnection:Disconnect() end
                 spinConnection = RunService.RenderStepped:Connect(function(dt)
-                    Camera.CFrame = Camera.CFrame * CFrame.Angles(0, math.rad(spinbotSpeed) * dt, 0)
+                    local char = LocalPlayer.Character
+                    if char then
+                        local hrp = char:FindFirstChild("HumanoidRootPart")
+                        if hrp then
+                            hrp.CFrame = hrp.CFrame * CFrame.Angles(0, math.rad(spinbotSpeed) * dt, 0)
+                        end
+                    end
                 end)
             else
                 if spinConnection then spinConnection:Disconnect() end
@@ -78,16 +84,20 @@ CombatTab:Section({ Title = "Movement" })
             bhopEnabled = state
             if bhopEnabled then
                 -- Hook into Humanoid state changes for reliable BHOP
-                local char = LocalPlayer.Character
-                if not char then return end
-                local hum = char:FindFirstChildOfClass("Humanoid")
-                if not hum then return end
-                if bhopConnection then bhopConnection:Disconnect() end
-                bhopConnection = hum.StateChanged:Connect(function(old, new)
-                    if new == Enum.HumanoidStateType.Landed and UIS:IsKeyDown(Enum.KeyCode.Space) then
-                        hum.Jump = true
-                    end
-                end)
+                local function hookBhop()
+                    local char = LocalPlayer.Character
+                    if not char then return end
+                    local hum = char:FindFirstChildOfClass("Humanoid")
+                    if not hum then return end
+                    if bhopConnection then bhopConnection:Disconnect() end
+                    bhopConnection = hum.StateChanged:Connect(function(_, new)
+                        if new == Enum.HumanoidStateType.Landed and UIS:IsKeyDown(Enum.KeyCode.Space) then
+                            hum.Jump = true
+                        end
+                    end)
+                end
+                hookBhop()
+                LocalPlayer.CharacterAdded:Connect(hookBhop)
             else
                 if bhopConnection then bhopConnection:Disconnect() end
                 bhopConnection = nil
@@ -111,10 +121,10 @@ CombatTab:Section({ Title = "Movement" })
 LocalPlayer.CharacterAdded:Connect(function(char)
     local hum = char:WaitForChild("Humanoid")
     hum.WalkSpeed = walkSpeed
-    -- Reapply BHOP connection to the new character if enabled
+    -- If bhop is active, reattach the bhop hook to the new character
     if bhopEnabled then
         if bhopConnection then bhopConnection:Disconnect() end
-        bhopConnection = hum.StateChanged:Connect(function(old, new)
+        bhopConnection = hum.StateChanged:Connect(function(_, new)
             if new == Enum.HumanoidStateType.Landed and UIS:IsKeyDown(Enum.KeyCode.Space) then
                 hum.Jump = true
             end
