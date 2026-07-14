@@ -1,8 +1,7 @@
--- =====================================================
---  NEW SIMPLE FEATURE SET (Third Person, Spinbot, BHop, WalkSpeed, Name ESP, Info)
--- =====================================================
-
 menu.Initialize({
+    -- =====================================================
+    --  TABS
+    -- =====================================================
     {
         name = "Combat",
         content = {
@@ -100,20 +99,80 @@ menu.Initialize({
             },
         }
     },
+    {
+        -- Minimal Settings tab (required by the UI library internally)
+        name = "Settings",
+        content = {
+            {
+                name = "Cheat Settings",
+                x = menu.columns.left,
+                y = 66,
+                width = menu.columns.width,
+                height = 160,
+                content = {
+                    {
+                        type = "toggle",
+                        name = "Watermark",
+                        value = true,
+                    },
+                    {
+                        type = "toggle",
+                        name = "Custom Menu Name",
+                        value = false,
+                    },
+                    {
+                        type = "textbox",
+                        name = "MenuName",
+                        text = "Tulip",
+                    },
+                    {
+                        type = "toggle",
+                        name = "Menu Accent",
+                        value = false,
+                        extra = {
+                            type = "single colorpicker",
+                            color = { 127, 72, 163 },
+                        },
+                    },
+                }
+            },
+            {
+                name = "Configuration",
+                x = menu.columns.right,
+                y = 66,
+                width = menu.columns.width,
+                height = 160,
+                content = {
+                    {
+                        type = "textbox",
+                        name = "ConfigName",
+                        text = "",
+                    },
+                    {
+                        type = "dropbox",
+                        name = "Configs",
+                        value = 1,
+                        values = GetConfigs(),
+                    },
+                    {
+                        type = "button",
+                        name = "Save Config",
+                        doubleclick = true,
+                    },
+                    {
+                        type = "button",
+                        name = "Load Config",
+                        doubleclick = true,
+                    },
+                }
+            },
+        }
+    },
 })
 
 -- =====================================================
---  FEATURE CODE
+--  FEATURE VARIABLES
 -- =====================================================
-
-local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
-local LocalPlayer = Players.LocalPlayer
-local Camera = workspace.CurrentCamera
-local TweenService = game:GetService("TweenService")
-
--- Variables
 local spinbotActive = false
 local spinSpeed = 10
 local thirdPerson = false
@@ -122,17 +181,21 @@ local bhopActive = false
 local walkSpeed = 16
 local nameESP = true
 
--- Spinbot
+-- =====================================================
+--  SPINBOT
+-- =====================================================
 local spinConnection
 local function updateSpinbot()
     if spinConnection then spinConnection:Disconnect() end
     if not spinbotActive then return end
     spinConnection = RunService.RenderStepped:Connect(function(dt)
-        Camera.CFrame = Camera.CFrame * CFrame.Angles(0, math.rad(spinSpeed * dt * 10), 0)
+        Camera.CFrame = Camera.CFrame * CFrame.Angles(0, math.rad(spinSpeed) * dt, 0)
     end)
 end
 
--- Third Person
+-- =====================================================
+--  THIRD PERSON
+-- =====================================================
 local function updateThirdPerson()
     if thirdPerson then
         LocalPlayer.CameraMode = Enum.CameraMode.Classic
@@ -143,23 +206,27 @@ local function updateThirdPerson()
     end
 end
 
--- Bunny Hop
+-- =====================================================
+--  BUNNY HOP
+-- =====================================================
 local bhopConnection
 local function updateBhop()
     if bhopConnection then bhopConnection:Disconnect() end
     if not bhopActive then return end
     bhopConnection = UserInputService.JumpRequest:Connect(function()
         local char = LocalPlayer.Character
-        if char and char:FindFirstChildOfClass("Humanoid") then
-            local hum = char.Humanoid
-            if hum:GetState() == Enum.HumanoidStateType.Landed then
+        if char then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum and hum:GetState() == Enum.HumanoidStateType.Landed then
                 hum.Jump = true
             end
         end
     end)
 end
 
--- Walk Speed (apply continuously)
+-- =====================================================
+--  WALK SPEED
+-- =====================================================
 RunService.Heartbeat:Connect(function()
     local char = LocalPlayer.Character
     if char and char:FindFirstChildOfClass("Humanoid") then
@@ -167,7 +234,9 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
--- Name ESP
+-- =====================================================
+--  NAME ESP
+-- =====================================================
 local espTexts = {}
 local function createNameESP(player)
     if player == LocalPlayer or espTexts[player] then return end
@@ -196,7 +265,7 @@ local function updateNameESP()
         end
         local head = player.Character:FindFirstChild("Head")
         if head then
-            local pos, onScreen = Camera:WorldToViewportPoint(head.Position + Vector3.new(0,1,0))
+            local pos, onScreen = Camera:WorldToViewportPoint(head.Position + Vector3.new(0, 1, 0))
             if onScreen then
                 text.Text = player.Name
                 text.Position = Vector2.new(pos.X, pos.Y)
@@ -218,7 +287,15 @@ Players.PlayerRemoving:Connect(removeNameESP)
 
 RunService.RenderStepped:Connect(updateNameESP)
 
--- Read settings from UI (polling)
+-- =====================================================
+--  READ UI VALUES (polling, with caching)
+-- =====================================================
+local prevSpinbotActive = false
+local prevSpinSpeed = spinSpeed
+local prevThirdPerson = false
+local prevThirdDist = thirdPersonDistance
+local prevBhopActive = false
+
 local function readSettings()
     if not menu or not menu.GetVal then return end
     spinbotActive = menu:GetVal("Combat", "Spinbot", "Enabled")
@@ -230,43 +307,42 @@ local function readSettings()
     nameESP = menu:GetVal("Visuals", "Player ESP", "Name ESP")
 end
 
--- Button press handler (for Discord link)
-local buttonPressed = ButtonPressed:connect(function(tab, group, name)
-    if tab == "Info" and group == "Discord" and name == "Copy Discord Link" then
-        setclipboard("https://discord.gg/dJJ3psbAxw")  -- replace with your actual link
-        CreateNotification("Discord link copied!")
-    end
-end)
-
--- Apply settings changes when UI updates
+-- =====================================================
+--  APPLY CHANGES WHEN UI VALUES CHANGE
+-- =====================================================
 RunService.Heartbeat:Connect(function()
-    local prevSpinbot = spinbotActive
-    local prevThird = thirdPerson
-    local prevDist = thirdPersonDistance
-    local prevBhop = bhopActive
-
     readSettings()
 
-    if spinbotActive ~= prevSpinbot or (spinbotActive and spinSpeed ~= prevSpinSpeed) then
+    if spinbotActive ~= prevSpinbotActive or spinSpeed ~= prevSpinSpeed then
         updateSpinbot()
+        prevSpinbotActive = spinbotActive
         prevSpinSpeed = spinSpeed
     end
-    if thirdPerson ~= prevThird or thirdPersonDistance ~= prevDist then
+
+    if thirdPerson ~= prevThirdPerson or thirdPersonDistance ~= prevThirdDist then
         updateThirdPerson()
+        prevThirdPerson = thirdPerson
+        prevThirdDist = thirdPersonDistance
     end
-    if bhopActive ~= prevBhop then
+
+    if bhopActive ~= prevBhopActive then
         updateBhop()
+        prevBhopActive = bhopActive
     end
 end)
 
--- Initial update
-readSettings()
-updateSpinbot()
-updateThirdPerson()
-updateBhop()
+-- =====================================================
+--  DISCORD BUTTON EVENT
+-- =====================================================
+ButtonPressed:connect(function(tab, group, name)
+    if tab == "Info" and group == "Discord" and name == "Copy Discord Link" then
+        setclipboard("https://discord.gg/dJJ3psbAxw")  -- Replace with your actual invite
+        CreateNotification("Discord link copied to clipboard!")
+    end
+end)
 
 -- =====================================================
---  WATERMARK (simplified)
+--  WATERMARK (simplified, compatible with Settings tab)
 -- =====================================================
 do
     local wm = menu.watermark
@@ -294,7 +370,9 @@ for k, v in pairs(menu.watermark.rect) do
 end
 menu.watermark.text[1].Visible = true
 
--- Final loading
+-- =====================================================
+--  FINAL LOADING
+-- =====================================================
 menu.load_time = math.floor((tick() - loadstart) * 1000)
 CreateNotification("Tulip.lua loaded in " .. menu.load_time .. " ms")
 CreateNotification("Press Right Shift to toggle menu")
