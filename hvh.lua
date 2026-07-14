@@ -35,6 +35,13 @@ local thirdPersonDistance = 10
 local nameEspEnabled = true
 local espTexts = {}
 
+-- Check if Drawing library is available (some executors don't support it)
+local hasDrawing = pcall(function() return Drawing.new end)
+if not hasDrawing then
+    warn("Drawing library not available – Name ESP will be disabled.")
+    nameEspEnabled = false
+end
+
 -- Create the Window
 local Window = WindUI:CreateWindow({
     Title = "Tulip",
@@ -83,20 +90,20 @@ CombatTab:Section({ Title = "Movement" })
         Callback = function(state)
             bhopEnabled = state
             if bhopEnabled then
-                -- Hook into Humanoid state changes for reliable BHOP
-                local function hookBhop()
-                    local char = LocalPlayer.Character
-                    if not char then return end
-                    local hum = char:FindFirstChildOfClass("Humanoid")
-                    if not hum then return end
-                    if bhopConnection then bhopConnection:Disconnect() end
-                    bhopConnection = hum.StateChanged:Connect(function(_, new)
-                        if new == Enum.HumanoidStateType.Landed and UIS:IsKeyDown(Enum.KeyCode.Space) then
-                            hum.Jump = true
-                        end
-                    end)
+                local function hookBhop(char)
+                    local hum = char and char:FindFirstChildOfClass("Humanoid")
+                    if hum then
+                        if bhopConnection then bhopConnection:Disconnect() end
+                        bhopConnection = hum.StateChanged:Connect(function(_, new)
+                            if new == Enum.HumanoidStateType.Landed and UIS:IsKeyDown(Enum.KeyCode.Space) then
+                                hum.Jump = true
+                            end
+                        end)
+                    end
                 end
-                hookBhop()
+                if LocalPlayer.Character then
+                    hookBhop(LocalPlayer.Character)
+                end
                 LocalPlayer.CharacterAdded:Connect(hookBhop)
             else
                 if bhopConnection then bhopConnection:Disconnect() end
@@ -117,11 +124,10 @@ CombatTab:Section({ Title = "Movement" })
         end,
     })
 
--- Ensure WalkSpeed applies to new characters
+-- Ensure WalkSpeed and BHOP apply to new characters
 LocalPlayer.CharacterAdded:Connect(function(char)
     local hum = char:WaitForChild("Humanoid")
     hum.WalkSpeed = walkSpeed
-    -- If bhop is active, reattach the bhop hook to the new character
     if bhopEnabled then
         if bhopConnection then bhopConnection:Disconnect() end
         bhopConnection = hum.StateChanged:Connect(function(_, new)
@@ -184,53 +190,55 @@ InfoTab:Section({ Title = "Discord" })
     })
 
 -- ==================== Name ESP (Drawing) ====================
-local function createESP(player)
-    if player == LocalPlayer or espTexts[player] then return end
-    local text = Drawing.new("Text")
-    text.Size = 14
-    text.Center = true
-    text.Outline = true
-    text.OutlineColor = Color3.new(0, 0, 0)
-    text.Visible = false
-    text.Font = 2
-    espTexts[player] = text
-end
-
-local function removeESP(player)
-    if espTexts[player] then
-        espTexts[player]:Remove()
-        espTexts[player] = nil
+if hasDrawing then
+    local function createESP(player)
+        if player == LocalPlayer or espTexts[player] then return end
+        local text = Drawing.new("Text")
+        text.Size = 14
+        text.Center = true
+        text.Outline = true
+        text.OutlineColor = Color3.new(0, 0, 0)
+        text.Visible = false
+        text.Font = 2
+        espTexts[player] = text
     end
-end
 
-local function updateESP()
-    for player, text in pairs(espTexts) do
-        if not nameEspEnabled or not player.Character then
-            text.Visible = false
-            continue
+    local function removeESP(player)
+        if espTexts[player] then
+            espTexts[player]:Remove()
+            espTexts[player] = nil
         end
-        local head = player.Character:FindFirstChild("Head")
-        if head then
-            local pos, onScreen = Camera:WorldToViewportPoint(head.Position + Vector3.new(0, 1, 0))
-            if onScreen then
-                text.Text = player.Name
-                text.Position = Vector2.new(pos.X, pos.Y)
-                text.Visible = true
+    end
+
+    local function updateESP()
+        for player, text in pairs(espTexts) do
+            if not nameEspEnabled or not player.Character then
+                text.Visible = false
+                continue
+            end
+            local head = player.Character:FindFirstChild("Head")
+            if head then
+                local pos, onScreen = Camera:WorldToViewportPoint(head.Position + Vector3.new(0, 1, 0))
+                if onScreen then
+                    text.Text = player.Name
+                    text.Position = Vector2.new(pos.X, pos.Y)
+                    text.Visible = true
+                else
+                    text.Visible = false
+                end
             else
                 text.Visible = false
             end
-        else
-            text.Visible = false
         end
     end
-end
 
-for _, player in ipairs(Players:GetPlayers()) do
-    createESP(player)
+    for _, player in ipairs(Players:GetPlayers()) do
+        createESP(player)
+    end
+    Players.PlayerAdded:Connect(createESP)
+    Players.PlayerRemoving:Connect(removeESP)
+    RunService.RenderStepped:Connect(updateESP)
 end
-Players.PlayerAdded:Connect(createESP)
-Players.PlayerRemoving:Connect(removeESP)
-RunService.RenderStepped:Connect(updateESP)
 
 -- ==================== Final notifies ====================
 WindUI:Notify({ Title = "Tulip", Content = "Loaded! Press INSERT to toggle menu." })
