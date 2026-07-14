@@ -1,4 +1,6 @@
--- Tulip.lua – Full HvH (WindUI, vodka silent aim)
+-- Tulip.lua – Full HvH (WindUI, vodka silent aim) – RELIABLE VERSION
+-- Every section is created exactly like the Build Exploit Pack example.
+
 local WindUI = nil
 pcall(function()
     if game:GetService("RunService"):IsStudio() then
@@ -28,7 +30,6 @@ local Settings = {
     FOVCircle = false,
 }
 
--- Feature globals
 local silentAimTarget = nil
 local espCache = {}
 
@@ -45,7 +46,7 @@ local function isVisible(part)
     return hit and hit:IsDescendantOf(part.Parent)
 end
 
--- Silent Aim target acquisition
+-- Silent Aim target
 local function getClosestTarget()
     if not Settings.SilentAim.Enabled then return nil end
     local closest = nil
@@ -94,7 +95,7 @@ pcall(function()
     fovCircle.Color = Color3.fromRGB(255,255,255); fovCircle.Thickness = 1
 end)
 
--- Update loop for aim & FOV
+-- Aim + FOV update
 RunService.RenderStepped:Connect(function()
     if Settings.SilentAim.Enabled then
         silentAimTarget = getClosestTarget()
@@ -297,6 +298,7 @@ local Window = WindUI:CreateWindow({
     Folder = "Tulip",
     Icon = "solar:flower-bold",
     OpenButton = { Title = "Open", Enabled = true },
+    Size = UDim2.fromOffset(650, 600),  -- larger to fit all elements
 })
 
 -- Tabs
@@ -305,55 +307,61 @@ local VisualsTab = Window:Tab({ Title = "Visuals", Icon = "solar:eye-bold" })
 local InfoTab = Window:Tab({ Title = "Info", Icon = "solar:info-bold" })
 
 -- === Combat Tab ===
-CombatTab:Section({ Title = "Silent Aim" })
-    :Toggle({ Title = "Enabled", Callback = function(v) Settings.SilentAim.Enabled = v end })
-    :Toggle({ Title = "Visibility Check", Value = true, Callback = function(v) Settings.SilentAim.VisibleCheck = v end })
-    :Toggle({ Title = "Team Check", Value = false, Callback = function(v) Settings.SilentAim.TeamCheck = v end })
-    :Slider({ Title = "FOV", Step = 10, Value = { Min = 10, Max = 500, Default = 200 }, Callback = function(v) Settings.SilentAim.FOV = v end })
-    :Dropdown({ Title = "Hit Part", Values = {"Head","UpperTorso","HumanoidRootPart"}, Value = "Head", Callback = function(v) Settings.SilentAim.HitPart = v end })
-    :Toggle({ Title = "Show FOV Circle", Value = false, Callback = function(v) Settings.FOVCircle = v end })
+local SilentAimSec = CombatTab:Section({ Title = "Silent Aim" })
+SilentAimSec:Toggle({ Title = "Enabled", Callback = function(v) Settings.SilentAim.Enabled = v end })
+SilentAimSec:Toggle({ Title = "Visibility Check", Value = true, Callback = function(v) Settings.SilentAim.VisibleCheck = v end })
+SilentAimSec:Toggle({ Title = "Team Check", Value = false, Callback = function(v) Settings.SilentAim.TeamCheck = v end })
+SilentAimSec:Slider({ Title = "FOV", Step = 10, Value = { Min = 10, Max = 500, Default = 200 }, Callback = function(v) Settings.SilentAim.FOV = v end })
+SilentAimSec:Dropdown({ Title = "Hit Part", Values = {"Head","UpperTorso","HumanoidRootPart"}, Value = "Head", Callback = function(v) Settings.SilentAim.HitPart = v end })
+SilentAimSec:Toggle({ Title = "Show FOV Circle", Value = false, Callback = function(v) Settings.FOVCircle = v end })
 
-CombatTab:Section({ Title = "Spinbot" })
-    :Toggle({ Title = "Enabled", Callback = function(v) Settings.Spinbot.Enabled = v; updateSpinbot() end })
-    :Slider({ Title = "Speed", Step = 1, Value = { Min = 1, Max = 50, Default = 10 }, Callback = function(v) Settings.Spinbot.Speed = v end })
+CombatTab:Space({ Columns = 1 })
 
-CombatTab:Section({ Title = "Movement" })
-    :Toggle({ Title = "Bunny Hop", Callback = function(v) Settings.Bhop = v; updateBhop() end })
-    :Slider({ Title = "Walk Speed", Step = 1, Value = { Min = 16, Max = 50, Default = 16 }, Callback = function(v)
-        Settings.WalkSpeed = v
-        local char = LocalPlayer.Character
-        if char then
-            local hum = getHumanoid(char)
-            if hum then hum.WalkSpeed = v end
-        end
-    end })
+local SpinbotSec = CombatTab:Section({ Title = "Spinbot" })
+SpinbotSec:Toggle({ Title = "Enabled", Callback = function(v) Settings.Spinbot.Enabled = v; updateSpinbot() end })
+SpinbotSec:Slider({ Title = "Speed", Step = 1, Value = { Min = 1, Max = 50, Default = 10 }, Callback = function(v) Settings.Spinbot.Speed = v end })
+
+CombatTab:Space({ Columns = 1 })
+
+local MoveSec = CombatTab:Section({ Title = "Movement" })
+MoveSec:Toggle({ Title = "Bunny Hop", Callback = function(v) Settings.Bhop = v; updateBhop() end })
+MoveSec:Slider({ Title = "Walk Speed", Step = 1, Value = { Min = 16, Max = 50, Default = 16 }, Callback = function(v)
+    Settings.WalkSpeed = v
+    local char = LocalPlayer.Character
+    if char then
+        local hum = getHumanoid(char)
+        if hum then hum.WalkSpeed = v end
+    end
+end })
 
 -- === Visuals Tab ===
-VisualsTab:Section({ Title = "Camera" })
-    :Toggle({ Title = "Third Person", Callback = function(v) Settings.ThirdPerson = v; updateThirdPerson() end })
-    :Slider({ Title = "Distance", Step = 1, Value = { Min = 5, Max = 30, Default = 10 }, Callback = function(v)
-        Settings.ThirdPersonDistance = v
-        if Settings.ThirdPerson then
-            LocalPlayer.CameraMaxZoomDistance = v
-            LocalPlayer.CameraMinZoomDistance = v
-        end
-    end })
+local CamSec = VisualsTab:Section({ Title = "Camera" })
+CamSec:Toggle({ Title = "Third Person", Callback = function(v) Settings.ThirdPerson = v; updateThirdPerson() end })
+CamSec:Slider({ Title = "Distance", Step = 1, Value = { Min = 5, Max = 30, Default = 10 }, Callback = function(v)
+    Settings.ThirdPersonDistance = v
+    if Settings.ThirdPerson then
+        LocalPlayer.CameraMaxZoomDistance = v
+        LocalPlayer.CameraMinZoomDistance = v
+    end
+end })
 
-VisualsTab:Section({ Title = "Player ESP" })
-    :Toggle({ Title = "Enable ESP", Value = true, Callback = function(v) Settings.ESP.Enabled = v end })
-    :Toggle({ Title = "Box", Value = true, Callback = function(v) Settings.ESP.Box = v end })
-    :Toggle({ Title = "Name", Value = true, Callback = function(v) Settings.ESP.Name = v end })
-    :Toggle({ Title = "Health Bar", Value = true, Callback = function(v) Settings.ESP.HealthBar = v end })
-    :Toggle({ Title = "Distance", Value = true, Callback = function(v) Settings.ESP.Distance = v end })
-    :Toggle({ Title = "Tracers", Value = true, Callback = function(v) Settings.ESP.Tracers = v end })
-    :Toggle({ Title = "Skeleton (R6/R15)", Value = true, Callback = function(v) Settings.ESP.Skeleton = v end })
+VisualsTab:Space({ Columns = 1 })
+
+local EspSec = VisualsTab:Section({ Title = "Player ESP" })
+EspSec:Toggle({ Title = "Enable ESP", Value = true, Callback = function(v) Settings.ESP.Enabled = v end })
+EspSec:Toggle({ Title = "Box", Value = true, Callback = function(v) Settings.ESP.Box = v end })
+EspSec:Toggle({ Title = "Name", Value = true, Callback = function(v) Settings.ESP.Name = v end })
+EspSec:Toggle({ Title = "Health Bar", Value = true, Callback = function(v) Settings.ESP.HealthBar = v end })
+EspSec:Toggle({ Title = "Distance", Value = true, Callback = function(v) Settings.ESP.Distance = v end })
+EspSec:Toggle({ Title = "Tracers", Value = true, Callback = function(v) Settings.ESP.Tracers = v end })
+EspSec:Toggle({ Title = "Skeleton (R6/R15)", Value = true, Callback = function(v) Settings.ESP.Skeleton = v end })
 
 -- === Info Tab ===
-InfoTab:Section({ Title = "Discord" })
-    :Button({ Title = "Copy Discord Invite", Callback = function()
-        setclipboard("https://discord.gg/dJJ3psbAxw")
-        WindUI:Notify({ Title = "Tulip", Content = "Discord link copied!" })
-    end })
+local DiscordSec = InfoTab:Section({ Title = "Discord" })
+DiscordSec:Button({ Title = "Copy Discord Invite", Callback = function()
+    setclipboard("https://discord.gg/dJJ3psbAxw")
+    WindUI:Notify({ Title = "Tulip", Content = "Discord link copied!" })
+end })
 
 -- Initialise
 updateSpinbot(); updateBhop(); updateThirdPerson()
