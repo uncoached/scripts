@@ -1,5 +1,7 @@
--- Tulip.lua – Full HvH (WindUI, vodka silent aim) – RELIABLE VERSION
--- Every section is created exactly like the Build Exploit Pack example.
+-- Tulip.lua – Full HvH (WindUI, vodka silent aim)
+-- Features: Silent Aim (raycast hook), Spinbot, Bunny Hop, Walk Speed, Third Person (persistent),
+--           Full ESP (Box, Name, Health, Distance, Tracers, Skeleton) with NPC support & cleanup,
+--           Chams, Glow, Visible-Only ESP, Wallbang (ignore walls), FOV Circle, Discord Invite.
 
 local WindUI = nil
 pcall(function()
@@ -18,26 +20,52 @@ local Workspace = game:GetService("Workspace")
 local Camera = Workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
 
--- Settings
+-- ==================== SETTINGS ====================
 local Settings = {
-    SilentAim = { Enabled = false, FOV = 200, VisibleCheck = true, TeamCheck = false, HitPart = "Head" },
+    SilentAim = {
+        Enabled = false,
+        FOV = 200,
+        HitPart = "Head",
+        VisibleCheck = true,
+        Wallbang = false,      -- if true, ignores visibility check (wall penetration)
+        TeamCheck = false,
+    },
     Spinbot = { Enabled = false, Speed = 10 },
     Bhop = false,
     WalkSpeed = 16,
-    ThirdPerson = false,
-    ThirdPersonDistance = 10,
-    ESP = { Enabled = true, Box = true, Name = true, HealthBar = true, Distance = true, Tracers = true, Skeleton = true },
+    ThirdPerson = { Enabled = false, Distance = 10 },
+    ESP = {
+        Enabled = true,
+        Box = true,
+        Name = true,
+        HealthBar = true,
+        Distance = true,
+        Tracers = true,
+        Skeleton = true,
+        VisibleOnly = false,   -- only show ESP for visible entities
+        NPCs = true,           -- include NPCs
+    },
+    Chams = { Enabled = false, FillColor = Color3.fromRGB(255,0,0), OutlineColor = Color3.fromRGB(0,0,0) },
+    Glow = { Enabled = false, Color = Color3.fromRGB(255,0,0) },
     FOVCircle = false,
 }
 
+-- ==================== FEATURE GLOBALS ====================
 local silentAimTarget = nil
-local espCache = {}
+local espCache = {}  -- for ESP drawings
+local chamHighlights = {}
+local glowBillboards = {}
 
--- Utility
+-- ==================== UTILITY FUNCTIONS ====================
+local function getCharacter(plr) return plr.Character end
 local function getHead(char) return char and char:FindFirstChild("Head") end
 local function getHRP(char) return char and char:FindFirstChild("HumanoidRootPart") end
 local function getHumanoid(char) return char and char:FindFirstChildWhichIsA("Humanoid") end
-local function teamCheck(plr) return Settings.SilentAim.TeamCheck and plr.Team == LocalPlayer.Team end
+
+local function teamCheck(plr)
+    return Settings.SilentAim.TeamCheck and plr.Team == LocalPlayer.Team
+end
+
 local function isVisible(part)
     local origin = Camera.CFrame.Position
     local dir = (part.Position - origin).Unit * 1000
@@ -46,18 +74,48 @@ local function isVisible(part)
     return hit and hit:IsDescendantOf(part.Parent)
 end
 
--- Silent Aim target
+-- ==================== TARGET ACQUISITION (Players + NPCs) ====================
+local function getTargetList()
+    -- Returns a list of models with valid Humanoids, excluding LocalPlayer and teammates if team check is on.
+    local targets = {}
+    -- Players
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and not teamCheck(plr) then
+            local char = getCharacter(plr)
+            if char then
+                local hum = getHumanoid(char)
+                if hum and hum.Health > 0 then
+                    table.insert(targets, char)
+                end
+            end
+        end
+    end
+    -- NPCs (if enabled)
+    if Settings.ESP.NPCs then
+        for _, model in ipairs(Workspace:GetDescendants()) do
+            if model:IsA("Model") and not Players:GetPlayerFromCharacter(model) then
+                local hum = getHumanoid(model)
+                if hum and hum.Health > 0 then
+                    -- basic check to avoid stuff like ragdolls
+                    local head = getHead(model)
+                    local hrp = getHRP(model)
+                    if head and hrp then
+                        table.insert(targets, model)
+                    end
+                end
+            end
+        end
+    end
+    return targets
+end
+
 local function getClosestTarget()
     if not Settings.SilentAim.Enabled then return nil end
     local closest = nil
     local closestDist = Settings.SilentAim.FOV
     local center = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr == LocalPlayer or teamCheck(plr) then continue end
-        local char = plr.Character
-        if not char then continue end
-        local hum = getHumanoid(char)
-        if not hum or hum.Health <= 0 then continue end
+    local targets = getTargetList()
+    for _, char in ipairs(targets) do
         local part = (Settings.SilentAim.HitPart == "Head" and getHead(char))
                       or (Settings.SilentAim.HitPart == "UpperTorso" and char:FindFirstChild("UpperTorso"))
                       or getHRP(char)
@@ -66,7 +124,8 @@ local function getClosestTarget()
         if not onScreen then continue end
         local dist = (Vector2.new(pos.X, pos.Y) - center).Magnitude
         if dist < closestDist then
-            if Settings.SilentAim.VisibleCheck and not isVisible(part) then continue end
+            -- Wallbang or visibility check
+            if not Settings.SilentAim.Wallbang and Settings.SilentAim.VisibleCheck and not isVisible(part) then continue end
             closestDist = dist
             closest = part.Position
         end
@@ -74,7 +133,7 @@ local function getClosestTarget()
     return closest
 end
 
--- Silent Aim hook (vodka method)
+-- ==================== SILENT AIM HOOK (vodka) ====================
 local Hooks = {}
 Hooks.Raycast = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
     local args = {...}
@@ -87,7 +146,7 @@ Hooks.Raycast = hookmetamethod(game, "__namecall", newcclosure(function(self, ..
     return Hooks.Raycast(self, ...)
 end))
 
--- FOV circle
+-- ==================== FOV CIRCLE ====================
 local fovCircle
 pcall(function()
     fovCircle = Drawing.new("Circle")
@@ -95,7 +154,6 @@ pcall(function()
     fovCircle.Color = Color3.fromRGB(255,255,255); fovCircle.Thickness = 1
 end)
 
--- Aim + FOV update
 RunService.RenderStepped:Connect(function()
     if Settings.SilentAim.Enabled then
         silentAimTarget = getClosestTarget()
@@ -110,7 +168,7 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- Spinbot
+-- ==================== SPINBOT ====================
 local spinConnection
 local function updateSpinbot()
     if spinConnection then spinConnection:Disconnect() end
@@ -126,7 +184,7 @@ local function updateSpinbot()
     end)
 end
 
--- Bunnyhop
+-- ==================== BUNNY HOP ====================
 local bhopConnection
 local function updateBhop()
     if bhopConnection then bhopConnection:Disconnect() end
@@ -142,10 +200,16 @@ local function updateBhop()
     end)
 end
 
--- WalkSpeed
+-- ==================== WALK SPEED ====================
 LocalPlayer.CharacterAdded:Connect(function(char)
     char:WaitForChild("Humanoid").WalkSpeed = Settings.WalkSpeed
     if Settings.Bhop then updateBhop() end
+    -- Reapply third person on respawn
+    if Settings.ThirdPerson.Enabled then
+        LocalPlayer.CameraMode = Enum.CameraMode.Classic
+        LocalPlayer.CameraMaxZoomDistance = Settings.ThirdPerson.Distance
+        LocalPlayer.CameraMinZoomDistance = Settings.ThirdPerson.Distance
+    end
 end)
 RunService.Heartbeat:Connect(function()
     local char = LocalPlayer.Character
@@ -155,18 +219,18 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
--- Third Person
+-- ==================== THIRD PERSON (persistent) ====================
 local function updateThirdPerson()
-    if Settings.ThirdPerson then
+    if Settings.ThirdPerson.Enabled then
         LocalPlayer.CameraMode = Enum.CameraMode.Classic
-        LocalPlayer.CameraMaxZoomDistance = Settings.ThirdPersonDistance
-        LocalPlayer.CameraMinZoomDistance = Settings.ThirdPersonDistance
+        LocalPlayer.CameraMaxZoomDistance = Settings.ThirdPerson.Distance
+        LocalPlayer.CameraMinZoomDistance = Settings.ThirdPerson.Distance
     else
         LocalPlayer.CameraMode = Enum.CameraMode.LockFirstPerson
     end
 end
 
--- ESP (Drawing)
+-- ==================== ESP (Drawing) ====================
 local hasDrawing = pcall(function() return Drawing.new end)
 if hasDrawing then
     local function getBonePositions(char)
@@ -206,38 +270,63 @@ if hasDrawing then
         return esp
     end
 
+    local function cleanupESP(target)
+        if espCache[target] then
+            for _, obj in pairs(espCache[target]) do
+                if type(obj) == "table" and obj.Remove then obj:Remove() end
+            end
+            espCache[target] = nil
+        end
+    end
+
     RunService.RenderStepped:Connect(function()
         if not Settings.ESP.Enabled then
-            for _, e in pairs(espCache) do
-                e.boxOutline.Visible = false; e.box.Visible = false
-                e.name.Visible = false; e.distance.Visible = false
-                e.healthOutline.Visible = false; e.healthBar.Visible = false
-                e.tracer.Visible = false
-                for _, line in ipairs(e.skeletonLines) do line:Remove() end
-                e.skeletonLines = {}
+            for target, esp in pairs(espCache) do
+                esp.boxOutline.Visible = false; esp.box.Visible = false
+                esp.name.Visible = false; esp.distance.Visible = false
+                esp.healthOutline.Visible = false; esp.healthBar.Visible = false
+                esp.tracer.Visible = false
+                for _, line in ipairs(esp.skeletonLines) do line:Remove() end
+                esp.skeletonLines = {}
             end
             return
         end
-        local alive = {}
-        for _, plr in ipairs(Players:GetPlayers()) do
-            if plr == LocalPlayer or teamCheck(plr) then continue end
-            local char = plr.Character
-            if not char then continue end
-            local hum = getHumanoid(char); local root = getHRP(char); local head = getHead(char)
-            if hum and hum.Health > 0 and root and head then
-                alive[plr] = true
-                if not espCache[plr] then espCache[plr] = createESPobj() end
-                local esp = espCache[plr]
+
+        local currentTargets = {}
+        local targets = getTargetList()
+        for _, char in ipairs(targets) do
+            local hum = getHumanoid(char)
+            if hum and hum.Health > 0 then
+                currentTargets[char] = true
+                if not espCache[char] then espCache[char] = createESPobj() end
+                local esp = espCache[char]
+                local root = getHRP(char)
+                local head = getHead(char)
+                if not root or not head then
+                    for _, v in pairs({esp.boxOutline, esp.box, esp.name, esp.distance, esp.healthOutline, esp.healthBar, esp.tracer}) do v.Visible = false end
+                    for _, line in ipairs(esp.skeletonLines) do line:Remove() end; esp.skeletonLines = {}
+                    continue
+                end
+
                 local rp, on1 = Camera:WorldToViewportPoint(root.Position)
                 local hp, on2 = Camera:WorldToViewportPoint(head.Position + Vector3.new(0,0.5,0))
                 local lp = Camera:WorldToViewportPoint(root.Position - Vector3.new(0,3,0))
-                if on1 and on2 then
+
+                local showESP = true
+                if Settings.ESP.VisibleOnly then
+                    -- Only show if any part is visible (we'll check head)
+                    showESP = isVisible(head)
+                end
+
+                if on1 and on2 and showESP then
                     local boxH = math.abs(hp.Y - lp.Y); local boxW = boxH / 2
                     local dist = math.floor((Camera.CFrame.Position - root.Position).Magnitude)
+
                     if Settings.ESP.Box then
                         esp.boxOutline.Size = Vector2.new(boxW, boxH); esp.boxOutline.Position = Vector2.new(rp.X - boxW/2, hp.Y)
                         esp.boxOutline.Visible = true; esp.box.Size = esp.boxOutline.Size; esp.box.Position = esp.boxOutline.Position; esp.box.Visible = true
                     else esp.boxOutline.Visible = false; esp.box.Visible = false end
+
                     if Settings.ESP.HealthBar then
                         local pct = hum.Health / hum.MaxHealth
                         local barX = rp.X - boxW/2 - 6
@@ -245,15 +334,22 @@ if hasDrawing then
                         esp.healthBar.From = Vector2.new(barX, hp.Y + boxH); esp.healthBar.To = Vector2.new(barX, hp.Y + boxH - (boxH * pct))
                         esp.healthBar.Color = Color3.new(1 - pct, pct, 0); esp.healthBar.Visible = true
                     else esp.healthOutline.Visible = false; esp.healthBar.Visible = false end
+
                     if Settings.ESP.Name then
-                        esp.name.Text = plr.Name; esp.name.Position = Vector2.new(rp.X, hp.Y - 20); esp.name.Visible = true
+                        local nameText = char.Name
+                        local plr = Players:GetPlayerFromCharacter(char)
+                        if plr then nameText = plr.Name end
+                        esp.name.Text = nameText; esp.name.Position = Vector2.new(rp.X, hp.Y - 20); esp.name.Visible = true
                     else esp.name.Visible = false end
+
                     if Settings.ESP.Distance then
                         esp.distance.Text = "[" .. dist .. "m]"; esp.distance.Position = Vector2.new(rp.X, hp.Y + boxH + 2); esp.distance.Visible = true
                     else esp.distance.Visible = false end
+
                     if Settings.ESP.Tracers then
                         esp.tracer.From = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y); esp.tracer.To = Vector2.new(rp.X, rp.Y); esp.tracer.Visible = true
                     else esp.tracer.Visible = false end
+
                     if Settings.ESP.Skeleton then
                         local bones = getBonePositions(char)
                         for _, line in ipairs(esp.skeletonLines) do line:Remove() end; esp.skeletonLines = {}
@@ -280,10 +376,10 @@ if hasDrawing then
                 end
             end
         end
-        for plr, esp in pairs(espCache) do
-            if not alive[plr] then
-                for _, obj in pairs(esp) do if type(obj) == "table" and obj.Remove then obj:Remove() end end
-                espCache[plr] = nil
+        -- Cleanup dead / removed targets
+        for target, esp in pairs(espCache) do
+            if not currentTargets[target] then
+                cleanupESP(target)
             end
         end
     end)
@@ -292,79 +388,177 @@ else
     warn("Drawing library missing – ESP disabled.")
 end
 
--- ==================== UI ====================
+-- ==================== CHAMS (Highlight) ====================
+local function toggleChams()
+    for _, hl in pairs(chamHighlights) do hl:Destroy() end
+    chamHighlights = {}
+    if not Settings.Chams.Enabled then return end
+    local function applyChams(target)
+        if chamHighlights[target] then return end
+        local highlight = Instance.new("Highlight")
+        highlight.FillColor = Settings.Chams.FillColor
+        highlight.OutlineColor = Settings.Chams.OutlineColor
+        highlight.Parent = target
+        chamHighlights[target] = highlight
+    end
+    -- Apply to current targets
+    for _, char in ipairs(getTargetList()) do applyChams(char) end
+    -- TODO: could add a listener for new characters, but for simplicity we'll just refresh in RenderStepped
+end
+
+RunService.Heartbeat:Connect(function()
+    if not Settings.Chams.Enabled then
+        if next(chamHighlights) then
+            for _, hl in pairs(chamHighlights) do hl:Destroy() end
+            chamHighlights = {}
+        end
+        return
+    end
+    local current = {}
+    for _, char in ipairs(getTargetList()) do current[char] = true end
+    -- Remove old
+    for target, hl in pairs(chamHighlights) do
+        if not current[target] then hl:Destroy(); chamHighlights[target] = nil end
+    end
+    -- Add new
+    for _, char in ipairs(getTargetList()) do
+        if not chamHighlights[char] then
+            local highlight = Instance.new("Highlight")
+            highlight.FillColor = Settings.Chams.FillColor
+            highlight.OutlineColor = Settings.Chams.OutlineColor
+            highlight.Parent = char
+            chamHighlights[char] = highlight
+        end
+    end
+end)
+
+-- ==================== GLOW (BillboardGui) ====================
+local function toggleGlow()
+    for _, glow in pairs(glowBillboards) do glow:Destroy() end
+    glowBillboards = {}
+    if not Settings.Glow.Enabled then return end
+    local function applyGlow(target)
+        if glowBillboards[target] then return end
+        local glow = Instance.new("BillboardGui")
+        glow.Adornee = target
+        glow.Size = UDim2.new(10,0,10,0)
+        glow.StudsOffset = Vector3.new(0,2,0)
+        local frame = Instance.new("Frame", glow)
+        frame.Size = UDim2.new(1,0,1,0)
+        frame.BackgroundColor3 = Settings.Glow.Color
+        frame.BackgroundTransparency = 0.5
+        frame.BorderSizePixel = 0
+        glow.Parent = target
+        glowBillboards[target] = glow
+    end
+    for _, char in ipairs(getTargetList()) do applyGlow(char) end
+end
+
+RunService.Heartbeat:Connect(function()
+    if not Settings.Glow.Enabled then
+        if next(glowBillboards) then
+            for _, g in pairs(glowBillboards) do g:Destroy() end
+            glowBillboards = {}
+        end
+        return
+    end
+    local current = {}
+    for _, char in ipairs(getTargetList()) do current[char] = true end
+    for target, glow in pairs(glowBillboards) do
+        if not current[target] then glow:Destroy(); glowBillboards[target] = nil end
+    end
+    for _, char in ipairs(getTargetList()) do
+        if not glowBillboards[char] then
+            local glow = Instance.new("BillboardGui")
+            glow.Adornee = char
+            glow.Size = UDim2.new(10,0,10,0)
+            glow.StudsOffset = Vector3.new(0,2,0)
+            local frame = Instance.new("Frame", glow)
+            frame.Size = UDim2.new(1,0,1,0)
+            frame.BackgroundColor3 = Settings.Glow.Color
+            frame.BackgroundTransparency = 0.5
+            frame.BorderSizePixel = 0
+            glow.Parent = char
+            glowBillboards[char] = glow
+        end
+    end
+end)
+
+-- ==================== UI (WindUI) ====================
 local Window = WindUI:CreateWindow({
     Title = "Tulip",
     Folder = "Tulip",
     Icon = "solar:flower-bold",
     OpenButton = { Title = "Open", Enabled = true },
-    Size = UDim2.fromOffset(650, 600),  -- larger to fit all elements
 })
 
--- Tabs
 local CombatTab = Window:Tab({ Title = "Combat", Icon = "solar:sword-bold" })
 local VisualsTab = Window:Tab({ Title = "Visuals", Icon = "solar:eye-bold" })
 local InfoTab = Window:Tab({ Title = "Info", Icon = "solar:info-bold" })
 
--- === Combat Tab ===
-local SilentAimSec = CombatTab:Section({ Title = "Silent Aim" })
-SilentAimSec:Toggle({ Title = "Enabled", Callback = function(v) Settings.SilentAim.Enabled = v end })
-SilentAimSec:Toggle({ Title = "Visibility Check", Value = true, Callback = function(v) Settings.SilentAim.VisibleCheck = v end })
-SilentAimSec:Toggle({ Title = "Team Check", Value = false, Callback = function(v) Settings.SilentAim.TeamCheck = v end })
-SilentAimSec:Slider({ Title = "FOV", Step = 10, Value = { Min = 10, Max = 500, Default = 200 }, Callback = function(v) Settings.SilentAim.FOV = v end })
-SilentAimSec:Dropdown({ Title = "Hit Part", Values = {"Head","UpperTorso","HumanoidRootPart"}, Value = "Head", Callback = function(v) Settings.SilentAim.HitPart = v end })
-SilentAimSec:Toggle({ Title = "Show FOV Circle", Value = false, Callback = function(v) Settings.FOVCircle = v end })
+-- Combat Tab
+CombatTab:Section({ Title = "Silent Aim" })
+    :Toggle({ Title = "Enabled", Callback = function(v) Settings.SilentAim.Enabled = v end })
+    :Toggle({ Title = "Visibility Check", Value = true, Callback = function(v) Settings.SilentAim.VisibleCheck = v end })
+    :Toggle({ Title = "Wallbang (Ignore Walls)", Value = false, Callback = function(v) Settings.SilentAim.Wallbang = v end })
+    :Toggle({ Title = "Team Check", Value = false, Callback = function(v) Settings.SilentAim.TeamCheck = v end })
+    :Slider({ Title = "FOV", Step = 10, Value = { Min = 10, Max = 500, Default = 200 }, Callback = function(v) Settings.SilentAim.FOV = v end })
+    :Dropdown({ Title = "Hit Part", Values = {"Head","UpperTorso","HumanoidRootPart"}, Value = "Head", Callback = function(v) Settings.SilentAim.HitPart = v end })
+    :Toggle({ Title = "Show FOV Circle", Value = false, Callback = function(v) Settings.FOVCircle = v end })
 
-CombatTab:Space({ Columns = 1 })
+CombatTab:Section({ Title = "Spinbot" })
+    :Toggle({ Title = "Enabled", Callback = function(v) Settings.Spinbot.Enabled = v; updateSpinbot() end })
+    :Slider({ Title = "Speed", Step = 1, Value = { Min = 1, Max = 50, Default = 10 }, Callback = function(v) Settings.Spinbot.Speed = v end })
 
-local SpinbotSec = CombatTab:Section({ Title = "Spinbot" })
-SpinbotSec:Toggle({ Title = "Enabled", Callback = function(v) Settings.Spinbot.Enabled = v; updateSpinbot() end })
-SpinbotSec:Slider({ Title = "Speed", Step = 1, Value = { Min = 1, Max = 50, Default = 10 }, Callback = function(v) Settings.Spinbot.Speed = v end })
+CombatTab:Section({ Title = "Movement" })
+    :Toggle({ Title = "Bunny Hop", Callback = function(v) Settings.Bhop = v; updateBhop() end })
+    :Slider({ Title = "Walk Speed", Step = 1, Value = { Min = 16, Max = 50, Default = 16 }, Callback = function(v)
+        Settings.WalkSpeed = v
+        local char = LocalPlayer.Character
+        if char then
+            local hum = getHumanoid(char)
+            if hum then hum.WalkSpeed = v end
+        end
+    end })
 
-CombatTab:Space({ Columns = 1 })
+-- Visuals Tab
+VisualsTab:Section({ Title = "Camera" })
+    :Toggle({ Title = "Third Person", Callback = function(v) Settings.ThirdPerson.Enabled = v; updateThirdPerson() end })
+    :Slider({ Title = "Distance", Step = 1, Value = { Min = 5, Max = 30, Default = 10 }, Callback = function(v)
+        Settings.ThirdPerson.Distance = v
+        if Settings.ThirdPerson.Enabled then
+            LocalPlayer.CameraMaxZoomDistance = v
+            LocalPlayer.CameraMinZoomDistance = v
+        end
+    end })
 
-local MoveSec = CombatTab:Section({ Title = "Movement" })
-MoveSec:Toggle({ Title = "Bunny Hop", Callback = function(v) Settings.Bhop = v; updateBhop() end })
-MoveSec:Slider({ Title = "Walk Speed", Step = 1, Value = { Min = 16, Max = 50, Default = 16 }, Callback = function(v)
-    Settings.WalkSpeed = v
-    local char = LocalPlayer.Character
-    if char then
-        local hum = getHumanoid(char)
-        if hum then hum.WalkSpeed = v end
-    end
-end })
+VisualsTab:Section({ Title = "Player ESP" })
+    :Toggle({ Title = "Enable ESP", Value = true, Callback = function(v) Settings.ESP.Enabled = v end })
+    :Toggle({ Title = "Box", Value = true, Callback = function(v) Settings.ESP.Box = v end })
+    :Toggle({ Title = "Name", Value = true, Callback = function(v) Settings.ESP.Name = v end })
+    :Toggle({ Title = "Health Bar", Value = true, Callback = function(v) Settings.ESP.HealthBar = v end })
+    :Toggle({ Title = "Distance", Value = true, Callback = function(v) Settings.ESP.Distance = v end })
+    :Toggle({ Title = "Tracers", Value = true, Callback = function(v) Settings.ESP.Tracers = v end })
+    :Toggle({ Title = "Skeleton", Value = true, Callback = function(v) Settings.ESP.Skeleton = v end })
+    :Toggle({ Title = "Visible Only", Value = false, Callback = function(v) Settings.ESP.VisibleOnly = v end })
+    :Toggle({ Title = "Include NPCs", Value = true, Callback = function(v) Settings.ESP.NPCs = v end })
 
--- === Visuals Tab ===
-local CamSec = VisualsTab:Section({ Title = "Camera" })
-CamSec:Toggle({ Title = "Third Person", Callback = function(v) Settings.ThirdPerson = v; updateThirdPerson() end })
-CamSec:Slider({ Title = "Distance", Step = 1, Value = { Min = 5, Max = 30, Default = 10 }, Callback = function(v)
-    Settings.ThirdPersonDistance = v
-    if Settings.ThirdPerson then
-        LocalPlayer.CameraMaxZoomDistance = v
-        LocalPlayer.CameraMinZoomDistance = v
-    end
-end })
+VisualsTab:Section({ Title = "Chams" })
+    :Toggle({ Title = "Enabled", Callback = function(v) Settings.Chams.Enabled = v; toggleChams() end })
+    -- Color pickers could be added if WindUI supports them, but to keep it simple we'll use default colors.
 
-VisualsTab:Space({ Columns = 1 })
+VisualsTab:Section({ Title = "Glow" })
+    :Toggle({ Title = "Enabled", Callback = function(v) Settings.Glow.Enabled = v; toggleGlow() end })
 
-local EspSec = VisualsTab:Section({ Title = "Player ESP" })
-EspSec:Toggle({ Title = "Enable ESP", Value = true, Callback = function(v) Settings.ESP.Enabled = v end })
-EspSec:Toggle({ Title = "Box", Value = true, Callback = function(v) Settings.ESP.Box = v end })
-EspSec:Toggle({ Title = "Name", Value = true, Callback = function(v) Settings.ESP.Name = v end })
-EspSec:Toggle({ Title = "Health Bar", Value = true, Callback = function(v) Settings.ESP.HealthBar = v end })
-EspSec:Toggle({ Title = "Distance", Value = true, Callback = function(v) Settings.ESP.Distance = v end })
-EspSec:Toggle({ Title = "Tracers", Value = true, Callback = function(v) Settings.ESP.Tracers = v end })
-EspSec:Toggle({ Title = "Skeleton (R6/R15)", Value = true, Callback = function(v) Settings.ESP.Skeleton = v end })
+-- Info Tab
+InfoTab:Section({ Title = "Discord" })
+    :Button({ Title = "Copy Discord Invite", Callback = function()
+        setclipboard("https://discord.gg/dJJ3psbAxw")
+        WindUI:Notify({ Title = "Tulip", Content = "Discord link copied!" })
+    end })
 
--- === Info Tab ===
-local DiscordSec = InfoTab:Section({ Title = "Discord" })
-DiscordSec:Button({ Title = "Copy Discord Invite", Callback = function()
-    setclipboard("https://discord.gg/dJJ3psbAxw")
-    WindUI:Notify({ Title = "Tulip", Content = "Discord link copied!" })
-end })
-
--- Initialise
+-- Init features
 updateSpinbot(); updateBhop(); updateThirdPerson()
-
+toggleChams(); toggleGlow()
 WindUI:Notify({ Title = "Tulip", Content = "Loaded! Insert to open menu." })
-print("Tulip.lua ready.")
+print("Tulip.lua ready – all features active.")
