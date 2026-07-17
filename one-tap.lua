@@ -2,12 +2,13 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+-- Both remotes now use ByteNetReliable as per your respawn call
 local PlayRemote = ReplicatedStorage:WaitForChild("ByteNetReliable")
-local RespawnRemote = ReplicatedStorage:WaitForChild("ByteNetUnreliable")
+local RespawnRemote = ReplicatedStorage:WaitForChild("ByteNetReliable")
 
 local TARGET_USERNAME = "roblox_user_151932818"
 
-local OFFSET_UP = 2
+local OFFSET_UP = 4
 local OFFSET_FORWARD = 4
 local PLAY_INTERVAL = 5
 local RESPAWN_INTERVAL = 0.1
@@ -38,7 +39,7 @@ LocalPlayer.CharacterRemoving:Connect(function()
 	DEATHS = DEATHS + 1
 end)
 
--- Teleport loop (error‑protected so it never stops)
+-- Error‑protected teleport so it never freezes
 local function teleportLoop()
 	while true do
 		local success, err = pcall(function()
@@ -51,13 +52,13 @@ local function teleportLoop()
 			end
 		end)
 		if not success then
-			-- optional: print("Teleport error:", err)
+			-- print("Teleport error:", err)  -- uncomment if you need to debug
 		end
 		RunService.Heartbeat:Wait()
 	end
 end
 
--- Play remote (every 5 seconds)
+-- Play remote (every 5 seconds, buffer "\027")
 local function firePlayRemote()
 	while true do
 		pcall(function()
@@ -67,18 +68,18 @@ local function firePlayRemote()
 	end
 end
 
--- Respawn remote (every 0.1 seconds, unconditional – old style, new buffer)
+-- Respawn remote (every 0.1 seconds, buffer "\028\001")
 local function fireRespawnRemote()
 	while true do
 		pcall(function()
-			RespawnRemote:FireServer(buffer.fromstring("\027"))
+			RespawnRemote:FireServer(buffer.fromstring("\028\001"))
 		end)
 		RESPAWNS = RESPAWNS + 1
 		task.wait(RESPAWN_INTERVAL)
 	end
 end
 
--- GUI (same as before)
+-- GUI (unchanged)
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "TeleportGUI"
 ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
