@@ -7,8 +7,8 @@ local RespawnRemote = ReplicatedStorage:WaitForChild("ByteNetUnreliable")
 
 local TARGET_USERNAME = "roblox_user_151932818"
 
-local OFFSET_UP = 2
-local OFFSET_FORWARD = 3
+local OFFSET_UP = 4
+local OFFSET_FORWARD = 4
 local PLAY_INTERVAL = 5
 local RESPAWN_INTERVAL = 0.1
 
@@ -31,7 +31,6 @@ local function getLocalHRP()
 	if not char then
 		char = LocalPlayer.CharacterAdded:Wait()
 	end
-	-- Wait for HRP in case it hasn't loaded yet
 	return char:WaitForChild("HumanoidRootPart")
 end
 
@@ -39,7 +38,7 @@ LocalPlayer.CharacterRemoving:Connect(function()
 	DEATHS = DEATHS + 1
 end)
 
--- Teleport loop with error protection
+-- Teleport loop (error‑protected so it never stops)
 local function teleportLoop()
 	while true do
 		local success, err = pcall(function()
@@ -52,12 +51,13 @@ local function teleportLoop()
 			end
 		end)
 		if not success then
-			-- Uncomment to debug: print("Teleport error:", err)
+			-- optional: print("Teleport error:", err)
 		end
 		RunService.Heartbeat:Wait()
 	end
 end
 
+-- Play remote (every 5 seconds)
 local function firePlayRemote()
 	while true do
 		pcall(function()
@@ -67,23 +67,18 @@ local function firePlayRemote()
 	end
 end
 
+-- Respawn remote (every 0.1 seconds, unconditional – old style, new buffer)
 local function fireRespawnRemote()
 	while true do
-		local char = LocalPlayer.Character
-		if char then
-			local humanoid = char:FindFirstChild("Humanoid")
-			if humanoid and humanoid.Health <= 0 then
-				pcall(function()
-					RespawnRemote:FireServer(buffer.fromstring("\027"))
-				end)
-				RESPAWNS = RESPAWNS + 1
-			end
-		end
+		pcall(function()
+			RespawnRemote:FireServer(buffer.fromstring("\027"))
+		end)
+		RESPAWNS = RESPAWNS + 1
 		task.wait(RESPAWN_INTERVAL)
 	end
 end
 
--- GUI (unchanged from previous version)
+-- GUI (same as before)
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "TeleportGUI"
 ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
