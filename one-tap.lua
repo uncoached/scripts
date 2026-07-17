@@ -7,7 +7,7 @@ local RespawnRemote = ReplicatedStorage:WaitForChild("ByteNetUnreliable")
 
 local TARGET_USERNAME = "roblox_user_151932818"
 
-local OFFSET_UP = 4
+local OFFSET_UP = 2
 local OFFSET_FORWARD = 4
 local PLAY_INTERVAL = 5
 local RESPAWN_INTERVAL = 0.1
