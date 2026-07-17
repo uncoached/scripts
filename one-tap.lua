@@ -7,32 +7,21 @@ local RespawnRemote = ReplicatedStorage:WaitForChild("ByteNetUnreliable")
 
 local TARGET_USERNAME = "roblox_user_151932818"
 
--- Default settings (editable via GUI)
-local OFFSET_UP = 4         -- studs upward
-local OFFSET_FORWARD = 4    -- studs in front of target
+local OFFSET_UP = 2
+local OFFSET_FORWARD = 3
 local PLAY_INTERVAL = 5
 local RESPAWN_INTERVAL = 0.1
 
--- Stats
 local DEATHS = 0
 local RESPAWNS = 0
 local START_TIME = os.clock()
 
 local LocalPlayer = Players.LocalPlayer
 
--- Helper functions
-local function getTargetCharacter()
-	local targetPlayer = Players:FindFirstChild(TARGET_USERNAME)
-	if targetPlayer then
-		return targetPlayer.Character
-	end
-	return nil
-end
-
 local function getTargetHRP()
-	local targetChar = getTargetCharacter()
-	if targetChar then
-		return targetChar:FindFirstChild("HumanoidRootPart")
+	local targetPlayer = Players:FindFirstChild(TARGET_USERNAME)
+	if targetPlayer and targetPlayer.Character then
+		return targetPlayer.Character:FindFirstChild("HumanoidRootPart")
 	end
 	return nil
 end
@@ -42,44 +31,51 @@ local function getLocalHRP()
 	if not char then
 		char = LocalPlayer.CharacterAdded:Wait()
 	end
+	-- Wait for HRP in case it hasn't loaded yet
 	return char:WaitForChild("HumanoidRootPart")
 end
 
--- Death counter
 LocalPlayer.CharacterRemoving:Connect(function()
 	DEATHS = DEATHS + 1
 end)
 
--- Teleport loop (instant)
+-- Teleport loop with error protection
 local function teleportLoop()
 	while true do
-		local hrp = getLocalHRP()
-		local targetHRP = getTargetHRP()
-		if targetHRP then
-			local forward = targetHRP.CFrame.LookVector
-			local pos = targetHRP.Position + forward * OFFSET_FORWARD + Vector3.new(0, OFFSET_UP, 0)
-			hrp.CFrame = CFrame.new(pos) * targetHRP.CFrame.Rotation
+		local success, err = pcall(function()
+			local hrp = getLocalHRP()
+			local targetHRP = getTargetHRP()
+			if hrp and targetHRP then
+				local forward = targetHRP.CFrame.LookVector
+				local pos = targetHRP.Position + forward * OFFSET_FORWARD + Vector3.new(0, OFFSET_UP, 0)
+				hrp.CFrame = CFrame.new(pos) * targetHRP.CFrame.Rotation
+			end
+		end)
+		if not success then
+			-- Uncomment to debug: print("Teleport error:", err)
 		end
 		RunService.Heartbeat:Wait()
 	end
 end
 
--- Play remote (every PLAY_INTERVAL seconds)
 local function firePlayRemote()
 	while true do
-		PlayRemote:FireServer(buffer.fromstring("\027"))
+		pcall(function()
+			PlayRemote:FireServer(buffer.fromstring("\027"))
+		end)
 		task.wait(PLAY_INTERVAL)
 	end
 end
 
--- Respawn remote (every RESPAWN_INTERVAL seconds, only when health = 0)
 local function fireRespawnRemote()
 	while true do
 		local char = LocalPlayer.Character
 		if char then
 			local humanoid = char:FindFirstChild("Humanoid")
 			if humanoid and humanoid.Health <= 0 then
-				RespawnRemote:FireServer(buffer.fromstring("\027"))
+				pcall(function()
+					RespawnRemote:FireServer(buffer.fromstring("\027"))
+				end)
 				RESPAWNS = RESPAWNS + 1
 			end
 		end
@@ -87,7 +83,7 @@ local function fireRespawnRemote()
 	end
 end
 
--- GUI
+-- GUI (unchanged from previous version)
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "TeleportGUI"
 ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
@@ -147,24 +143,23 @@ local playIntervalBox = makeTextBox(90, PLAY_INTERVAL)
 makeLabel("Respawn Interval (s):", 115)
 local respawnIntervalBox = makeTextBox(115, RESPAWN_INTERVAL)
 
-upOffsetBox.FocusLost:Connect(function(enterPressed)
+upOffsetBox.FocusLost:Connect(function()
 	local num = tonumber(upOffsetBox.Text)
 	if num then OFFSET_UP = num end
 end)
-forwardOffsetBox.FocusLost:Connect(function(enterPressed)
+forwardOffsetBox.FocusLost:Connect(function()
 	local num = tonumber(forwardOffsetBox.Text)
 	if num then OFFSET_FORWARD = num end
 end)
-playIntervalBox.FocusLost:Connect(function(enterPressed)
+playIntervalBox.FocusLost:Connect(function()
 	local num = tonumber(playIntervalBox.Text)
 	if num and num > 0 then PLAY_INTERVAL = num end
 end)
-respawnIntervalBox.FocusLost:Connect(function(enterPressed)
+respawnIntervalBox.FocusLost:Connect(function()
 	local num = tonumber(respawnIntervalBox.Text)
 	if num and num > 0 then RESPAWN_INTERVAL = num end
 end)
 
--- Stats display
 local statsLabel = Instance.new("TextLabel")
 statsLabel.Size = UDim2.new(1, -20, 0, 80)
 statsLabel.Position = UDim2.new(0, 10, 0, 155)
@@ -184,7 +179,6 @@ task.spawn(function()
 	end
 end)
 
--- Start all loops
 task.spawn(teleportLoop)
 task.spawn(firePlayRemote)
 task.spawn(fireRespawnRemote)
